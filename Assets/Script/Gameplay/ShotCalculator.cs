@@ -1,0 +1,518 @@
+using Soccer3D.Data;
+using UnityEngine;
+
+namespace Soccer3D.Gameplay
+{
+    public struct ComputedShotResult
+    {
+        public ShotMetadata metadata;
+        public Vector3 launchVelocity;
+        public Vector3 magnusAcceleration;
+        public float curveDuration;
+        public Vector3 spinAngularVelocity;
+        public string feedbackSummary;
+    }
+
+    public static class ShotCalculator
+    {
+        public const float PitchHalfLength = 28.0f;
+        public const float PitchHalfWidth = 18.0f;
+        public const float GoalHalfWidth = 3.80f;
+        public const float GoalHeight = 2.55f;
+
+        /// <summary>
+        /// 현재 선수 자세와 공 높이/거리를 바탕으로 오버헤드킥 또는 아크로바틱 발리 가능 여부 판정
+        /// </summary>
+        public static bool CheckAcrobaticOpportunity(
+            SoccerPlayerController player,
+            SoccerBall ball,
+            Vector3 goalCenterPos,
+            bool holdingAcrobaticKey,
+            out ShotType acrobaticType)
+        {
+            acrobaticType = ShotType.Normal;
+            if (player == null || ball == null) return false;
+
+            // 드리블 완전 소유 상태(지상)가 아니고 공이 떠 있어야 함
+            float h = ball.HeightAboveGround;
+            if (h < 0.48f || h > 3.75f)
+                return false;
+
+            PlayerProfile p = player.Profile;
+            float acroNorm = p != null ? Mathf.InverseLerp(45f, 99f, p.acrobatics) : 0.5f;
+            float reachRadius = 3.15f + (p != null ? p.AerialReachBonus : 0f) + acroNorm * 0.65f;
+
+            Vector3 playerPlanar = new Vector3(player.transform.position.x, 0f, player.transform.position.z);
+            Vector3 ballPlanar = new Vector3(ball.transform.position.x, 0f, ball.transform.position.z);
+            float planarDist = Vector3.Distance(playerPlanar, ballPlanar);
+
+            if (planarDist > reachRadius)
+                return false;
+
+            Vector3 toGoal = (goalCenterPos - player.transform.position);
+            toGoal.y = 0f;
+            if (toGoal.sqrMagnitude < 0.01f) toGoal = Vector3.right;
+            toGoal.Normalize();
+
+            Vector3 fwd = player.transform.forward;
+            fwd.y = 0f;
+            if (fwd.sqrMagnitude < 0.01f) fwd = toGoal;
+            fwd.Normalize();
+
+            float facingGoalDot = Vector3.Dot(fwd, toGoal);
+
+            // 오버헤드킥 조건 (아크로바틱 골이 많이 나오도록 판정을 넉넉하고 직관적으로 설계!):
+            // 1) 골문을 등지거나 옆으로 선 자세 (각도 약 52도 이상, dot < 0.62)
+            // 2) 공이 가슴/어깨 높이 이상(>= 1.02m) 떠 있을 때 (셀프 플릭 Q / 로빙 A 직후 포함!)
+            // 3) C키(아크로바틱 자세 키)를 누른 상태
+            if (facingGoalDot < 0.62f || h >= 1.02f || holdingAcrobaticKey)
+            {
+                acrobaticType = ShotType.OverheadKick;
+                return true;
+            }
+
+            // 골문을 정면으로 보며 낮게 뜬 공(0.48~1.02m)은 시저스 아크로바틱 발리!
+            acrobaticType = ShotType.AcrobaticVolley;
+            return true;
+        }
+
+        /// <summary>
+        /// 선수의 몸 기준 공 위치·각도·감아차기 방향을 분석해 실제 타격 발(오른발/왼발) 결정
+        /// </summary>
+        public static PreferredFoot DetermineStrikingFoot(
+            SoccerPlayerController shooter,
+            Vector3 ballPos,
+            Vector3 goalCenter,
+            ShotType shotType,
+            Vector2 moveAimInput)
+        {
+            PlayerProfile p = shooter.Profile;
+            PreferredFoot pref = p != null ? p.preferredFoot : PreferredFoot.Right;
+
+            Vector3 toGoal = (goalCenter - shooter.transform.position);
+            toGoal.y = 0f;
+            if (toGoal.sqrMagnitude < 0.01f) toGoal = Vector3.right;
+            toGoal.Normalize();
+
+            // 공격 방향 기준 오른쪽 단위벡터 (수평면)
+            Vector3 attackRight = Vector3.Cross(Vector3.up, toGoal).normalized;
+            float ballSideOffset = Vector3.Dot(ballPos - shooter.transform.position, attackRight);
+
+            // 감아차기(Z+D)는 인사이드 컬 특성상 경기장 좌측(측면)에서 우측 골문으로 감을 때 오른발,
+            // 우측 측면에서 감을 때 왼발이 자연스럽게 나감 (단, 공이 확실히 한쪽 발 앞에 있으면 그 발 사용)
+            if (shotType == ShotType.FinesseCurve)
+            {
+                if (Mathf.Abs(ballSideOffset) > 0.22f)
+                    return ballSideOffset >= 0f ? PreferredFoot.Right : PreferredFoot.Left;
+
+                // 공격 방향 기준 선수가 좌측 하프스페이스에 있으면 오른발 감아차기, 우측이면 왼발 감아차기 유리
+                float fieldSide = Vector3.Dot(shooter.transform.position - goalCenter, attackRight);
+                if (Mathf.Abs(fieldSide) > 2.4f)
+                    return fieldSide < 0f ? PreferredFoot.Right : PreferredFoot.Left;
+
+                return pref;
+            }
+
+            // 일반 슛 / 오버헤드킥: 공이 몸 중심에서 어느 발 쪽으로 치우쳐 있는지 + 진행 방향 기반 판정
+            if (ballSideOffset > 0.14f)
+                return PreferredFoot.Right;
+            if (ballSideOffset < -0.14f)
+                return PreferredFoot.Left;
+
+            // 애매한 중앙에 있을 때는 이동 방향이 약발 쪽으로 급격히 꺾여 있으면 약발이 걸릴 수 있음
+            float lateralMove = Vector3.Dot(new Vector3(moveAimInput.x, 0f, moveAimInput.y), attackRight);
+            if (pref == PreferredFoot.Right && lateralMove < -0.65f && Random.value < 0.55f)
+                return PreferredFoot.Left;
+            if (pref == PreferredFoot.Left && lateralMove > 0.65f && Random.value < 0.55f)
+                return PreferredFoot.Right;
+
+            return pref;
+        }
+
+        /// <summary>
+        /// 스탯(골결정력·슛파워·중거리·커브·아크로바틱), 거리, 주발/약발, 게이지 차징을 모두 반영하여 최종 슈팅 물리 산출
+        /// </summary>
+        public static ComputedShotResult ComputeShot(
+            SoccerPlayerController shooter,
+            SoccerBall ball,
+            GoalkeeperAI opposingKeeper,
+            int targetGoalSign, // +1 = 오른쪽(+X) 골문, -1 = 왼쪽(-X) 골문
+            ShotType shotType,
+            float charge01,
+            Vector2 aimInput)
+        {
+            PlayerProfile prof = shooter.Profile;
+            Vector3 startPos = ball.transform.position;
+            Vector3 goalCenter = new Vector3(targetGoalSign * PitchHalfLength, 0f, 0f);
+
+            float distToGoal = Vector2.Distance(
+                new Vector2(startPos.x, startPos.z),
+                new Vector2(goalCenter.x, goalCenter.z));
+
+            // 1. 타격 발 & 주발/약발 판정
+            PreferredFoot footUsed = DetermineStrikingFoot(shooter, startPos, goalCenter, shotType, aimInput);
+            bool usedWeakFoot = (prof != null) && (footUsed != prof.preferredFoot);
+
+            // 2. 슛 종류 및 거리에 따른 핵심 스탯 가중치 계산
+            float finNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.finishing) : 0.6f;
+            float powNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.shotPower) : 0.6f;
+            float longNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.longShots) : 0.6f;
+            float curveNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.curve) : 0.6f;
+            float acroNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.acrobatics) : 0.6f;
+
+            // 중거리 비중 (13m 이내 0 -> 25m 이상 1)
+            float longRangeWeight = Mathf.InverseLerp(12.5f, 25.0f, distToGoal);
+
+            float statAccuracy01;
+            switch (shotType)
+            {
+                case ShotType.FinesseCurve:
+                    // 감아차기: 커브 + 중거리(원거리일수록 크게 작용) + 골결정력 반영!
+                    statAccuracy01 = curveNorm * 0.50f
+                                   + Mathf.Lerp(finNorm, longNorm, Mathf.Max(0.45f, longRangeWeight)) * 0.50f;
+                    break;
+
+                case ShotType.OverheadKick:
+                case ShotType.AcrobaticVolley:
+                    // 아크로바틱 슛: 아크로바틱 스탯 핵심 + 골결정력 + 아크로바틱 보너스(화려한 골 자주 나오도록!)
+                    statAccuracy01 = acroNorm * 0.55f + finNorm * 0.30f + powNorm * 0.15f + 0.14f;
+                    break;
+
+                default:
+                    // 일반 파워 슛: 근거리면 골결정력, 원거리면 중거리 슛 스탯이 정확도 좌우
+                    statAccuracy01 = Mathf.Lerp(finNorm, longNorm, longRangeWeight) * 0.75f + powNorm * 0.25f;
+                    break;
+            }
+
+            // 게이지 스위트 스팟 (0.35 ~ 0.88 구간이 이상적, 풀차징 오버히트면 살짝 들뜸)
+            float gaugePenalty = charge01 > 0.94f ? 0.12f : 0f;
+            statAccuracy01 = Mathf.Clamp(statAccuracy01 - gaugePenalty, 0.10f, 1.15f);
+
+            // 약발 페널티! (주발이 아닌 발로 차면 정확도 및 구석 조준력 대폭 하락)
+            float weakFootPenalty = 0f;
+            if (usedWeakFoot)
+            {
+                int stars = prof != null ? prof.weakFootStars : 3;
+                // 2성 -> -0.38, 3성 -> -0.28, 4성 -> -0.19
+                weakFootPenalty = Mathf.Lerp(0.42f, 0.18f, Mathf.InverseLerp(1f, 4.5f, stars));
+                statAccuracy01 = Mathf.Max(0.08f, statAccuracy01 - weakFootPenalty);
+            }
+
+            // 3. 골문 내 목표 지점 선정 (스탯이 높을수록 골키퍼 반대편 사각지대 구석으로 예리하게 꽂힘!)
+            Vector3 attackRight = Vector3.Cross(Vector3.up, (goalCenter - startPos).normalized).normalized;
+            float keeperZ = opposingKeeper != null ? opposingKeeper.transform.position.z : 0f;
+
+            // 플레이어의 조준 방향(위/아래 화살표) 반영 + 스탯 높으면 골키퍼 먼 쪽 포스트 자동 보정
+            float desiredSideZ;
+            if (Mathf.Abs(aimInput.y) > 0.25f)
+            {
+                desiredSideZ = Mathf.Sign(aimInput.y) * Random.Range(2.35f, 3.35f);
+            }
+            else if (shotType == ShotType.FinesseCurve)
+            {
+                // 감아차기는 차는 발의 인사이드 커브가 휘어 들어가는 파 포스트 구석을 자동 조준!
+                float curlDirSign = (footUsed == PreferredFoot.Right ? 1f : -1f) * Mathf.Sign(attackRight.z);
+                if (Mathf.Abs(curlDirSign) < 0.01f) curlDirSign = keeperZ >= 0f ? -1f : 1f;
+                desiredSideZ = curlDirSign * Random.Range(2.55f, 3.40f);
+            }
+            else
+            {
+                // 키퍼가 서 있는 반대쪽 먼 포스트 공략
+                float openSideSign = keeperZ >= 0f ? -1f : 1f;
+                desiredSideZ = openSideSign * Random.Range(2.45f, 3.35f);
+            }
+
+            // 스탯이 낮으면 정중앙(키퍼 정면)으로 몰리거나 바깥으로 빗나갈 오차가 커짐
+            float cornerPrecision = Mathf.Clamp01(statAccuracy01);
+            float baseTargetZ = Mathf.Lerp(desiredSideZ * 0.45f, desiredSideZ, cornerPrecision);
+
+            float idealHeight;
+            if (shotType == ShotType.OverheadKick)
+                idealHeight = Random.Range(1.55f, 2.22f); // 상단 사각 꽂히기!
+            else if (shotType == ShotType.FinesseCurve)
+                idealHeight = Random.Range(1.45f, 2.18f);
+            else
+                idealHeight = Mathf.Lerp(0.55f, 2.10f, Mathf.Clamp01(charge01 * 0.85f + 0.15f));
+
+            // 오차 산포 (스탯 낮거나 약발이면 좌우/상하 빗나감 증가)
+            float maxErrorZ = Mathf.Lerp(2.85f, 0.16f, cornerPrecision);
+            float maxErrorY = Mathf.Lerp(1.35f, 0.12f, cornerPrecision);
+
+            if (usedWeakFoot)
+            {
+                maxErrorZ += 1.35f;
+                maxErrorY += 0.62f;
+            }
+
+            // 아크로바틱 슛은 유저 요청대로 골이 시원시원하게 많이 들어가도록 오차 상한 완화!
+            if ((shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley) && !usedWeakFoot)
+            {
+                maxErrorZ *= 0.52f;
+                maxErrorY *= 0.48f;
+            }
+
+            float finalZ = baseTargetZ + Random.Range(-maxErrorZ, maxErrorZ);
+            float finalY = Mathf.Max(0.28f, idealHeight + Random.Range(-maxErrorY * 0.55f, maxErrorY));
+
+            Vector3 finalTarget = new Vector3(
+                goalCenter.x + targetGoalSign * 0.35f, // 골라인 안쪽 깊숙이 목표
+                finalY,
+                finalZ
+            );
+
+            // 4. 슛 스피드 산출 (슛 파워 스탯 + 체중 파워 보너스 + 슛 타입 배율)
+            float baseSpeed = Mathf.Lerp(20.5f, 34.5f, powNorm);
+            if (prof != null)
+                baseSpeed *= (1f + prof.HeavyShotBonus);
+
+            float chargeBoost = Mathf.Lerp(0.82f, 1.14f, charge01);
+            float shotSpeed = baseSpeed * chargeBoost;
+
+            if (shotType == ShotType.OverheadKick)
+                shotSpeed *= 1.12f; // 오버헤드킥 임팩트 쾌감 배가!
+            else if (shotType == ShotType.AcrobaticVolley)
+                shotSpeed *= 1.07f;
+            else if (shotType == ShotType.FinesseCurve)
+                shotSpeed *= 0.88f; // 감아차기는 궤적 예술성을 위해 체공시간 살짝 확보
+
+            if (usedWeakFoot)
+                shotSpeed *= 0.89f;
+
+            shotSpeed = Mathf.Clamp(shotSpeed, 17.5f, 39.5f);
+
+            // 5. 마그누스 커브 가속도 계산 (특히 감아차기 Z+D!)
+            float flightTime = Mathf.Clamp(distToGoal / Mathf.Max(12f, shotSpeed * 0.92f), 0.30f, 1.18f);
+            Vector3 magnusAccel = Vector3.zero;
+            Vector3 spinVel = Random.insideUnitSphere * 8f;
+
+            if (shotType == ShotType.FinesseCurve)
+            {
+                // 인사이드 감아차기: 오른발이면 진행 방향 기준 오른쪽으로 감기고, 왼발이면 왼쪽으로 휘어짐!
+                // attackRight는 진행 방향의 오른쪽 수평 벡터
+                float curlSign = (footUsed == PreferredFoot.Right) ? 1f : -1f;
+                float curveStrength = Mathf.Lerp(7.5f, 24.5f, curveNorm);
+                if (usedWeakFoot) curveStrength *= 0.65f;
+
+                // 바깥쪽에서 안쪽 포스트로 휘어 감겨 들어오도록 횡가속도 + 살짝 뚝 떨어지는 탑스핀 부여
+                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.16f);
+                spinVel = Vector3.up * (-curlSign * 34f);
+            }
+            else if (shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley)
+            {
+                // 강렬한 드롭 탑스핀으로 크로스바 아래로 꽂히는 궤적!
+                magnusAccel = Vector3.down * Mathf.Lerp(2.5f, 6.5f, acroNorm);
+                spinVel = attackRight * 32f;
+            }
+            else
+            {
+                // 일반 슛도 커브 스탯에 비례한 약간의 자연스러운 아웃프론트/인프론트 휨 부여
+                float subtleCurl = (footUsed == PreferredFoot.Right ? 1f : -1f) * Mathf.Lerp(1.0f, 5.0f, curveNorm);
+                magnusAccel = attackRight * subtleCurl;
+                spinVel = Vector3.up * (-subtleCurl * 4f);
+            }
+
+            // 6. 선형 공기저항(linearDamping = 0.22)과 중력+마그누스 가속도를 정확히 역산한 초기 발사 속도
+            float k = ball.Rb != null ? Mathf.Max(0.001f, ball.Rb.linearDamping) : 0.22f;
+            float alpha = (1f - Mathf.Exp(-k * flightTime)) / k;
+            Vector3 totalAccel = Physics.gravity + magnusAccel;
+            Vector3 launchVel = ((finalTarget - startPos) - totalAccel * ((flightTime - alpha) / k)) / Mathf.Max(0.05f, alpha);
+
+            // 랜덤 임팩트 VFX 선정
+            ImpactVfxType[] vfxPool = (ImpactVfxType[])System.Enum.GetValues(typeof(ImpactVfxType));
+            ImpactVfxType chosenVfx = vfxPool[Random.Range(0, vfxPool.Length)];
+
+            ShotMetadata meta = new ShotMetadata
+            {
+                shooter = shooter,
+                shotType = shotType,
+                vfxType = chosenVfx,
+                footUsed = footUsed,
+                usedWeakFoot = usedWeakFoot,
+                shotQuality01 = statAccuracy01,
+                initialSpeedMps = launchVel.magnitude,
+                targetPoint = finalTarget,
+                targetTeamGoal = targetGoalSign
+            };
+
+            // 실시간 타격 피드백 문구 생성
+            string footLabel = footUsed == PreferredFoot.Right ? "오른발" : "왼발";
+            string footStatus = usedWeakFoot
+                ? $"⚠️ 약발({footLabel}) 정확도 하락!"
+                : $"✅ 주발({footLabel}) 임팩트!";
+
+            int kmh = Mathf.RoundToInt(launchVel.magnitude * 3.6f);
+            string shotName = GetShotKoreanName(shotType);
+            string vfxName = GetVfxKoreanName(chosenVfx);
+
+            string statNote = "";
+            if (shotType == ShotType.FinesseCurve && prof != null)
+                statNote = $" [커브 {prof.curve} · 중거리 {prof.longShots}]";
+            else if ((shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley) && prof != null)
+                statNote = $" [아크로바틱 {prof.acrobatics} · 결정력 {prof.finishing}]";
+            else if (prof != null)
+                statNote = distToGoal >= 15f ? $" [중거리 {prof.longShots} · 파워 {prof.shotPower}]" : $" [결정력 {prof.finishing} · 파워 {prof.shotPower}]";
+
+            string summary = $"{vfxName} {shotName}! ({kmh} km/h) | {footStatus}{statNote}";
+
+            return new ComputedShotResult
+            {
+                metadata = meta,
+                launchVelocity = launchVel,
+                magnusAcceleration = magnusAccel,
+                curveDuration = flightTime * 1.08f,
+                spinAngularVelocity = spinVel,
+                feedbackSummary = summary
+            };
+        }
+
+        /// <summary>
+        /// 반칙 선언 후 직접 프리킥(Direct Free Kick) 물리 산출:
+        /// 수비벽을 돌아 휘어 감기는 Z+D 감아차기 프리킥과 D 무회전 파워 프리킥 지원!
+        /// </summary>
+        public static ComputedShotResult ComputeFreeKickShot(
+            SoccerPlayerController shooter,
+            SoccerBall ball,
+            int targetGoalSign,
+            Vector3 aimedGoalPoint,
+            bool isCurveShot,
+            float charge01)
+        {
+            PlayerProfile prof = shooter.Profile;
+            Vector3 startPos = ball.transform.position;
+            Vector3 goalCenter = new Vector3(targetGoalSign * PitchHalfLength, 0f, 0f);
+
+            float distToGoal = Vector2.Distance(
+                new Vector2(startPos.x, startPos.z),
+                new Vector2(goalCenter.x, goalCenter.z));
+
+            // 세트피스 프리킥은 선수가 주발 각도로 도움닫기를 잡으므로 주발 타격!
+            PreferredFoot footUsed = prof != null ? prof.preferredFoot : PreferredFoot.Right;
+
+            float finNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.finishing) : 0.65f;
+            float powNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.shotPower) : 0.65f;
+            float longNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.longShots) : 0.65f;
+            float curveNorm = prof != null ? Mathf.InverseLerp(45f, 99f, prof.curve) : 0.65f;
+
+            ShotType shotType = isCurveShot ? ShotType.FinesseCurve : ShotType.Normal;
+            float statAccuracy01 = isCurveShot
+                ? (curveNorm * 0.58f + longNorm * 0.27f + finNorm * 0.15f)
+                : (longNorm * 0.42f + powNorm * 0.33f + finNorm * 0.25f);
+
+            bool overcharged = charge01 > 0.94f;
+            if (overcharged)
+                statAccuracy01 -= 0.16f;
+
+            float precision = Mathf.Clamp01(statAccuracy01 + 0.08f);
+            float maxErrZ = Mathf.Lerp(1.55f, 0.09f, precision);
+            float maxErrY = Mathf.Lerp(0.78f, 0.07f, precision);
+
+            float finalZ = aimedGoalPoint.z + Random.Range(-maxErrZ, maxErrZ);
+            float finalY = Mathf.Max(0.28f, aimedGoalPoint.y + Random.Range(-maxErrY * 0.5f, maxErrY) + (overcharged ? 0.52f : 0f));
+
+            Vector3 finalTarget = new Vector3(
+                goalCenter.x + targetGoalSign * 0.38f,
+                finalY,
+                finalZ
+            );
+
+            float baseSpeed = Mathf.Lerp(21.5f, 35.0f, powNorm) * Mathf.Lerp(0.84f, 1.15f, charge01);
+            if (prof != null)
+                baseSpeed *= (1f + prof.HeavyShotBonus);
+            if (isCurveShot)
+                baseSpeed *= 0.87f;
+
+            float shotSpeed = Mathf.Clamp(baseSpeed, 18.5f, 38.5f);
+            float flightTime = Mathf.Clamp(distToGoal / Mathf.Max(12f, shotSpeed * 0.90f), 0.36f, 1.18f);
+
+            Vector3 toGoalPlanar = (goalCenter - startPos);
+            toGoalPlanar.y = 0f;
+            if (toGoalPlanar.sqrMagnitude < 0.01f) toGoalPlanar = Vector3.right * targetGoalSign;
+            toGoalPlanar.Normalize();
+            Vector3 attackRight = Vector3.Cross(Vector3.up, toGoalPlanar).normalized;
+
+            Vector3 magnusAccel;
+            Vector3 spinVel;
+            if (isCurveShot)
+            {
+                // 수비벽 바깥으로 크게 휜 뒤 골문 구석으로 감겨 꽂히는 프리킥 궤적!
+                float curlSign = (footUsed == PreferredFoot.Right) ? 1f : -1f;
+                float curveStrength = Mathf.Lerp(10.5f, 27.5f, curveNorm);
+                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.22f);
+                spinVel = Vector3.up * (-curlSign * 38f);
+            }
+            else
+            {
+                // 무회전/드롭 파워 프리킥 (수비벽 위를 넘겨 뚝 떨어지는 궤적)
+                float dip = Mathf.Lerp(2.5f, 6.8f, longNorm);
+                float subtleSide = Random.Range(-2.2f, 2.2f);
+                magnusAccel = Vector3.down * dip + attackRight * subtleSide;
+                spinVel = attackRight * 18f;
+            }
+
+            float k = ball.Rb != null ? Mathf.Max(0.001f, ball.Rb.linearDamping) : 0.22f;
+            float alpha = (1f - Mathf.Exp(-k * flightTime)) / k;
+            Vector3 totalAccel = Physics.gravity + magnusAccel;
+            Vector3 launchVel = ((finalTarget - startPos) - totalAccel * ((flightTime - alpha) / k)) / Mathf.Max(0.05f, alpha);
+
+            ImpactVfxType[] vfxPool = (ImpactVfxType[])System.Enum.GetValues(typeof(ImpactVfxType));
+            ImpactVfxType chosenVfx = vfxPool[Random.Range(0, vfxPool.Length)];
+
+            ShotMetadata meta = new ShotMetadata
+            {
+                shooter = shooter,
+                shotType = shotType,
+                vfxType = chosenVfx,
+                footUsed = footUsed,
+                usedWeakFoot = false,
+                shotQuality01 = Mathf.Clamp(statAccuracy01 + 0.06f, 0.15f, 1.15f),
+                initialSpeedMps = launchVel.magnitude,
+                targetPoint = finalTarget,
+                targetTeamGoal = targetGoalSign
+            };
+
+            int kmh = Mathf.RoundToInt(launchVel.magnitude * 3.6f);
+            string vfxName = GetVfxKoreanName(chosenVfx);
+            string fkLabel = isCurveShot ? "감아차기 프리킥" : "파워 프리킥";
+            string footLabel = footUsed == PreferredFoot.Right ? "오른발" : "왼발";
+            string statNote = isCurveShot && prof != null
+                ? $" [커브 {prof.curve} · 중거리 {prof.longShots}]"
+                : (prof != null ? $" [중거리 {prof.longShots} · 파워 {prof.shotPower}]" : "");
+
+            string summary = $"🎯 {vfxName} {fkLabel}! ({kmh} km/h) | ✅ 주발({footLabel}) 세트피스!{statNote}";
+
+            return new ComputedShotResult
+            {
+                metadata = meta,
+                launchVelocity = launchVel,
+                magnusAcceleration = magnusAccel,
+                curveDuration = flightTime * 1.08f,
+                spinAngularVelocity = spinVel,
+                feedbackSummary = summary
+            };
+        }
+
+        public static string GetShotKoreanName(ShotType type)
+        {
+            switch (type)
+            {
+                case ShotType.OverheadKick: return "오버헤드킥";
+                case ShotType.AcrobaticVolley: return "아크로바틱 시저스 발리";
+                case ShotType.FinesseCurve: return "감아차기 슛";
+                default: return "파워 슈팅";
+            }
+        }
+
+        public static string GetVfxKoreanName(ImpactVfxType vfx)
+        {
+            switch (vfx)
+            {
+                case ImpactVfxType.BlazingFire: return "🔥 인페르노 불꽃";
+                case ImpactVfxType.NeonLaser: return "⚡ 네온 레이저";
+                case ImpactVfxType.CosmicPlasma: return "💜 코즈믹 플라즈마";
+                case ImpactVfxType.GoldenLightning: return "⚡ 골든 썬더";
+                case ImpactVfxType.EmeraldSonic: return "🐉 소닉 드래곤";
+                default: return "✨ 슈퍼";
+            }
+        }
+    }
+}
