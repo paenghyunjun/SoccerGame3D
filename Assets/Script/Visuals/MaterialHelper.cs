@@ -10,6 +10,11 @@ namespace Soccer3D.Visuals
         private static Texture2D _soccerBallTexture;
         private static Texture2D _goalNetTexture;
         private static Sprite _whiteSprite;
+        private static Sprite _circleSprite;
+        private static Sprite _circleRingSprite;
+        private static Sprite _arrowSprite;
+        private static Sprite _roundedRectSprite;
+        private static Sprite _pillSprite;
 
         public static Shader GetLitShader()
         {
@@ -183,6 +188,172 @@ namespace Soccer3D.Visuals
             return _whiteSprite;
         }
 
+        public static Sprite GetCircleSprite()
+        {
+            if (_circleSprite != null) return _circleSprite;
+            int size = 64;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            float half = (size - 1) * 0.5f;
+            Color[] cols = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = (x - half) / half;
+                    float dy = (y - half) / half;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy);
+                    float alpha = Mathf.Clamp01((0.95f - r) * 14f);
+                    cols[y * size + x] = new Color(1f, 1f, 1f, alpha);
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            _circleSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f));
+            return _circleSprite;
+        }
+
+        public static Sprite GetCircleRingSprite()
+        {
+            if (_circleRingSprite != null) return _circleRingSprite;
+            int size = 96;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            float half = (size - 1) * 0.5f;
+            Color[] cols = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = (x - half) / half;
+                    float dy = (y - half) / half;
+                    float r = Mathf.Sqrt(dx * dx + dy * dy);
+                    float distFromRing = Mathf.Abs(r - 0.88f);
+                    float alpha = Mathf.Clamp01((0.065f - distFromRing) * 24f);
+                    cols[y * size + x] = new Color(1f, 1f, 1f, alpha);
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            _circleRingSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f));
+            return _circleRingSprite;
+        }
+
+        /// <summary>
+        /// 9-슬라이스(9-Sliced) 매끄러운 둥근 모서리 스프라이트 (패널, 카드, 버튼 등 각진 네모 제거용)
+        /// </summary>
+        public static Sprite GetRoundedRectSprite()
+        {
+            if (_roundedRectSprite != null) return _roundedRectSprite;
+            int size = 64;
+            int r = 16;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            Color[] cols = new Color[size * size];
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float cx = x < r ? r : (x >= size - r ? size - 1 - r : x);
+                    float cy = y < r ? r : (y >= size - r ? size - 1 - r : y);
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    float alpha = Mathf.Clamp01((r - dist) * 1.6f + 0.5f);
+                    cols[y * size + x] = new Color(1f, 1f, 1f, alpha);
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            _roundedRectSprite = Sprite.Create(
+                tex,
+                new Rect(0, 0, size, size),
+                new Vector2(0.5f, 0.5f),
+                100f,
+                0,
+                SpriteMeshType.FullRect,
+                new Vector4(r, r, r, r)
+            );
+            return _roundedRectSprite;
+        }
+
+        /// <summary>
+        /// 9-슬라이스(9-Sliced) 완전 둥근 캡슐/알약(Pill) 스프라이트 (배지, 태그, 게이지 바 등)
+        /// </summary>
+        public static Sprite GetPillSprite()
+        {
+            if (_pillSprite != null) return _pillSprite;
+            int size = 64;
+            int r = 31;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            Color[] cols = new Color[size * size];
+
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float cx = x < r ? r : (x >= size - r ? size - 1 - r : x);
+                    float cy = y < r ? r : (y >= size - r ? size - 1 - r : y);
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    float alpha = Mathf.Clamp01((r - dist) * 1.6f + 0.5f);
+                    cols[y * size + x] = new Color(1f, 1f, 1f, alpha);
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            _pillSprite = Sprite.Create(
+                tex,
+                new Rect(0, 0, size, size),
+                new Vector2(0.5f, 0.5f),
+                100f,
+                0,
+                SpriteMeshType.FullRect,
+                new Vector4(r, r, r, r)
+            );
+            return _pillSprite;
+        }
+
+        /// <summary>
+        /// +Y(위쪽) 방향을 가리키는 선명한 전술 화살표 스프라이트 (미니맵 시야 및 HUD 공 추적 화살표용)
+        /// </summary>
+        public static Sprite GetArrowSprite()
+        {
+            if (_arrowSprite != null) return _arrowSprite;
+            int size = 64;
+            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            Color[] cols = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                float ny = (y + 0.5f) / size; // 0(bottom) .. 1(top)
+                for (int x = 0; x < size; x++)
+                {
+                    float nx = (x + 0.5f) / size - 0.5f; // -0.5 .. +0.5
+                    float ax = Mathf.Abs(nx);
+                    // 날렵한 셰브론/화살촉 형태
+                    float maxHalfWidth = (0.94f - ny) * 0.56f;
+                    bool insideOuter = ny <= 0.94f && ny >= 0.10f && ax <= maxHalfWidth;
+                    bool notchedBase = ny < 0.30f && ax < (0.30f - ny) * 0.85f;
+                    float edgeDist = maxHalfWidth - ax;
+                    float alpha = (insideOuter && !notchedBase) ? Mathf.Clamp01(edgeDist * 28f) : 0f;
+                    cols[y * size + x] = new Color(1f, 1f, 1f, alpha);
+                }
+            }
+            tex.SetPixels(cols);
+            tex.Apply();
+            _arrowSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f));
+            return _arrowSprite;
+        }
+
         /// <summary>
         /// 잔디 위에서도 한눈에 확 띄는 프리미어리그 윈터 볼 스타일 (형광 옐로우-오렌지 + 크림슨 레드 + 네이비 스타 패치)
         /// </summary>
@@ -255,7 +426,7 @@ namespace Soccer3D.Visuals
         }
 
         /// <summary>
-        /// 사실적인 천연 잔디 구장 알베도 + 마이크로 잔디 결 노멀맵 동시 생성
+        /// 사실적인 천연 잔디 구장 알베도 + 마이크로 잔디 결 노멀맵 동시 생성 (FIFA 정규 105m x 68m 라인 규격 지원)
         /// </summary>
         public static void CreateRealisticPitchTextures(
             float fieldLength,
@@ -265,8 +436,8 @@ namespace Soccer3D.Visuals
             out Texture2D albedoTex,
             out Texture2D normalTex)
         {
-            int w = 1024;
-            int h = 680;
+            int w = 1536;
+            int h = 1024;
             albedoTex = new Texture2D(w, h, TextureFormat.RGBA32, true);
             albedoTex.wrapMode = TextureWrapMode.Clamp;
             albedoTex.filterMode = FilterMode.Trilinear;
@@ -281,15 +452,24 @@ namespace Soccer3D.Visuals
             float totalZ = fieldWidth + marginWidth * 2f;
             float halfL = fieldLength * 0.5f;
             float halfW = fieldWidth * 0.5f;
+            bool fullRegulation = fieldLength >= 90f;
 
             // 과장된 원색 대신 유럽 야간 구장 특유의 깊고 사실적인 천연 잔디 색감
             Color grassMowLight = new Color(0.16f, 0.44f, 0.15f);
             Color grassMowDark = new Color(0.11f, 0.35f, 0.12f);
             Color grassCrossTint = new Color(0.14f, 0.40f, 0.14f);
             Color trackApron = new Color(0.15f, 0.19f, 0.16f);
-            Color chalkWhite = new Color(0.94f, 0.96f, 0.94f);
+            Color chalkWhite = new Color(0.95f, 0.97f, 0.95f);
 
-            float lineThickness = 0.15f;
+            float lineThickness = fullRegulation ? 0.16f : 0.15f;
+            float centerCircleRadius = fullRegulation ? 9.15f : 5.2f;
+            float penDepth = fullRegulation ? 16.5f : 9.5f;
+            float penHalfW = fullRegulation ? 20.16f : 9.5f;
+            float goalBoxDepth = fullRegulation ? 5.5f : 3.6f;
+            float goalBoxHalfW = fullRegulation ? 9.16f : 5.25f;
+            float penSpotX = halfL - (fullRegulation ? 11.0f : 6.8f);
+            float penArcRadius = fullRegulation ? 9.15f : 4.5f;
+
             Color[] pixels = new Color[w * h];
             Color[] normals = new Color[w * h];
 
@@ -303,7 +483,7 @@ namespace Soccer3D.Visuals
                     float nx = (px + 0.5f) / w - 0.5f;
                     float x = nx * totalX;
 
-                    bool insideTurf = Mathf.Abs(x) <= halfL + 1.8f && Mathf.Abs(z) <= halfW + 1.6f;
+                    bool insideTurf = Mathf.Abs(x) <= halfL + 2.6f && Mathf.Abs(z) <= halfW + 2.2f;
                     Color baseCol;
 
                     if (!insideTurf)
@@ -314,9 +494,9 @@ namespace Soccer3D.Visuals
                     }
                     else
                     {
-                        // 세로 + 가로 교차 잔디 깎기 패턴 (실제 축구장 체크무늬 잔디 결)
-                        int stripeX = Mathf.FloorToInt((x + halfL + 4f) / (fieldLength / 14f));
-                        int stripeZ = Mathf.FloorToInt((z + halfW + 4f) / (fieldWidth / 8f));
+                        // 세로 18등분 + 가로 12등분 교차 잔디 깎기 패턴 (실제 정규 축구장 체크무늬 잔디 결)
+                        int stripeX = Mathf.FloorToInt((x + halfL + 6f) / (fieldLength / 18f));
+                        int stripeZ = Mathf.FloorToInt((z + halfW + 6f) / (fieldWidth / 12f));
 
                         baseCol = (stripeX % 2 == 0) ? grassMowLight : grassMowDark;
                         if (stripeZ % 2 == 0)
@@ -330,32 +510,30 @@ namespace Soccer3D.Visuals
                         baseCol.b = Mathf.Clamp01(baseCol.b + macroNoise * 0.5f + bladeNoise * 0.4f);
 
                         float goalMouthDist = Mathf.Min(
-                            Vector2.Distance(new Vector2(x, z), new Vector2(-halfL + 1.2f, 0f)),
-                            Vector2.Distance(new Vector2(x, z), new Vector2(halfL - 1.2f, 0f))
+                            Vector2.Distance(new Vector2(x, z), new Vector2(-halfL + 1.4f, 0f)),
+                            Vector2.Distance(new Vector2(x, z), new Vector2(halfL - 1.4f, 0f))
                         );
-                        if (goalMouthDist < 3.6f)
+                        if (goalMouthDist < 4.5f)
                         {
-                            float wear = (1f - goalMouthDist / 3.6f) * 0.22f * Mathf.PerlinNoise(px * 0.18f, py * 0.18f);
+                            float wear = (1f - goalMouthDist / 4.5f) * 0.22f * Mathf.PerlinNoise(px * 0.18f, py * 0.18f);
                             baseCol = Color.Lerp(baseCol, new Color(0.32f, 0.28f, 0.18f), wear);
                         }
                     }
 
                     bool isLine = false;
-                    if (Mathf.Abs(z) <= halfW + lineThickness && Mathf.Abs(Mathf.Abs(x) - halfL) <= lineThickness)
+                    float ax = Mathf.Abs(x);
+                    float az = Mathf.Abs(z);
+
+                    if (az <= halfW + lineThickness && Mathf.Abs(ax - halfL) <= lineThickness)
                         isLine = true;
-                    if (Mathf.Abs(x) <= halfL + lineThickness && Mathf.Abs(Mathf.Abs(z) - halfW) <= lineThickness)
+                    if (ax <= halfL + lineThickness && Mathf.Abs(az - halfW) <= lineThickness)
                         isLine = true;
-                    if (Mathf.Abs(z) <= halfW && Mathf.Abs(x) <= lineThickness)
+                    if (az <= halfW && ax <= lineThickness)
                         isLine = true;
 
                     float centerDist = Mathf.Sqrt(x * x + z * z);
-                    if (Mathf.Abs(centerDist - 5.2f) <= lineThickness || centerDist <= 0.28f)
+                    if (Mathf.Abs(centerDist - centerCircleRadius) <= lineThickness || centerDist <= 0.34f)
                         isLine = true;
-
-                    float penDepth = 9.5f;
-                    float penHalfW = 9.5f;
-                    float ax = Mathf.Abs(x);
-                    float az = Mathf.Abs(z);
 
                     if (ax >= halfL - penDepth - lineThickness && ax <= halfL)
                     {
@@ -363,31 +541,35 @@ namespace Soccer3D.Visuals
                         if (Mathf.Abs(ax - (halfL - penDepth)) <= lineThickness && az <= penHalfW + lineThickness) isLine = true;
                     }
 
-                    float goalBoxDepth = 3.6f;
-                    float goalBoxHalfW = 5.25f;
                     if (ax >= halfL - goalBoxDepth - lineThickness && ax <= halfL)
                     {
                         if (Mathf.Abs(az - goalBoxHalfW) <= lineThickness) isLine = true;
                         if (Mathf.Abs(ax - (halfL - goalBoxDepth)) <= lineThickness && az <= goalBoxHalfW + lineThickness) isLine = true;
                     }
 
-                    float penSpotX = halfL - 6.8f;
                     float distLeftSpot = Mathf.Sqrt((x + penSpotX) * (x + penSpotX) + z * z);
                     float distRightSpot = Mathf.Sqrt((x - penSpotX) * (x - penSpotX) + z * z);
-                    if (distLeftSpot <= 0.24f || distRightSpot <= 0.24f)
+                    if (distLeftSpot <= 0.28f || distRightSpot <= 0.28f)
                         isLine = true;
-                    if (x > -(halfL - penDepth) && Mathf.Abs(distLeftSpot - 4.5f) <= lineThickness)
+                    if (x > -(halfL - penDepth) && Mathf.Abs(distLeftSpot - penArcRadius) <= lineThickness)
                         isLine = true;
-                    if (x < (halfL - penDepth) && Mathf.Abs(distRightSpot - 4.5f) <= lineThickness)
+                    if (x < (halfL - penDepth) && Mathf.Abs(distRightSpot - penArcRadius) <= lineThickness)
                         isLine = true;
 
-                    pixels[py * w + px] = isLine ? Color.Lerp(baseCol, chalkWhite, 0.92f) : baseCol;
+                    // 코너 아크 (반경 1m)
+                    if (ax <= halfL && az <= halfW)
+                    {
+                        float cornerDist = Mathf.Sqrt((halfL - ax) * (halfL - ax) + (halfW - az) * (halfW - az));
+                        if (Mathf.Abs(cornerDist - 1.0f) <= lineThickness)
+                            isLine = true;
+                    }
+
+                    pixels[py * w + px] = isLine ? Color.Lerp(baseCol, chalkWhite, 0.93f) : baseCol;
 
                     // 노멀맵 샘플 (잔디 미세 요철 표현)
                     float n1 = Mathf.PerlinNoise((px + 1f) * 0.55f, py * 0.55f) - Mathf.PerlinNoise((px - 1f) * 0.55f, py * 0.55f);
                     float n2 = Mathf.PerlinNoise(px * 0.55f, (py + 1f) * 0.55f) - Mathf.PerlinNoise(px * 0.55f, (py - 1f) * 0.55f);
                     Vector3 nVec = new Vector3(-n1 * 1.4f, -n2 * 1.4f, 1f).normalized;
-                    // Unity 런타임 비압축 RGBA32 노멀 패킹 (0.5 + 0.5*n)
                     normals[py * w + px] = new Color(nVec.x * 0.5f + 0.5f, nVec.y * 0.5f + 0.5f, nVec.z * 0.5f + 0.5f, 1f);
                 }
             }

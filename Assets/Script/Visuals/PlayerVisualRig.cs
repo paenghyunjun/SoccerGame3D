@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using Soccer3D.Data;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Soccer3D.Visuals
 {
@@ -15,7 +17,11 @@ namespace Soccer3D.Visuals
             FoulFall,
             WallJump,
             KeeperDive,
-            Celebrate
+            Celebrate,
+            TrapBall,
+            Header,
+            BlitzDash,
+            ShoulderBarge
         }
 
         private Transform _bodyRoot;
@@ -38,9 +44,26 @@ namespace Soccer3D.Visuals
         private Transform _rightElbow;
 
         private GameObject _chargeFootAura;
+        private GameObject _groundIndicatorObj;
+        private readonly List<Renderer> _firstPersonHiddenRenderers = new List<Renderer>();
         private float _walkCycle;
         private float _heightScale = 1f;
         private float _buildScale = 1f;
+        private float _jumpHeightOffset;
+
+        public bool IsFirstPersonMode { get; private set; }
+        public float WalkCycle => _walkCycle;
+
+        public void SetJumpHeightOffset(float offsetY)
+        {
+            _jumpHeightOffset = Mathf.Max(0f, offsetY);
+        }
+
+        public void SetBroadcastSoloVisible(bool visible)
+        {
+            if (_bodyRoot != null && _bodyRoot.gameObject.activeSelf != visible)
+                _bodyRoot.gameObject.SetActive(visible);
+        }
 
         private AnimAction _currentAction = AnimAction.None;
         private float _actionTimer;
@@ -188,6 +211,7 @@ namespace Soccer3D.Visuals
             _chargeFootAura.SetActive(false);
 
             // 바닥 플레이어 링 마커 (더 얇고 세련된 링으로 업그레이드)
+            _groundIndicatorObj = null;
             if (!isGoalkeeper)
             {
                 GameObject baseRing = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -199,8 +223,58 @@ namespace Soccer3D.Visuals
                 baseRing.transform.localScale = new Vector3(1.15f, 1.15f, 1f);
                 Renderer gr = baseRing.GetComponent<Renderer>();
                 gr.sharedMaterial = MaterialHelper.CreateAdditiveVfxMaterial(jersey, 2.0f, useRing: true);
-                gr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                gr.shadowCastingMode = ShadowCastingMode.Off;
+                _groundIndicatorObj = baseRing;
             }
+
+            CacheFirstPersonHiddenRenderers();
+            SetFirstPersonViewMode(IsFirstPersonMode);
+        }
+
+        private void CacheFirstPersonHiddenRenderers()
+        {
+            _firstPersonHiddenRenderers.Clear();
+            if (_spine == null) return;
+
+            Renderer[] spineRenderers = _spine.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < spineRenderers.Length; i++)
+            {
+                Renderer r = spineRenderers[i];
+                if (r == null) continue;
+
+                // 전완근·손목 테이핑·손(_leftElbow / _rightElbow 하위)은 1인칭 달리기 시 시야 양옆에 자연스럽게 보이도록 유지!
+                if ((_leftElbow != null && r.transform.IsChildOf(_leftElbow)) ||
+                    (_rightElbow != null && r.transform.IsChildOf(_rightElbow)))
+                {
+                    continue;
+                }
+
+                // 머리·헤어·목·유니폼 칼라·상체 흉곽은 ShadowsOnly로 전환해 카메라 클리핑을 완벽히 차단하면서 잔디 그림자는 그대로 유지!
+                _firstPersonHiddenRenderers.Add(r);
+            }
+        }
+
+        public void SetFirstPersonViewMode(bool firstPerson)
+        {
+            IsFirstPersonMode = firstPerson;
+            ShadowCastingMode mode = firstPerson ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
+            for (int i = 0; i < _firstPersonHiddenRenderers.Count; i++)
+            {
+                if (_firstPersonHiddenRenderers[i] != null)
+                    _firstPersonHiddenRenderers[i].shadowCastingMode = mode;
+            }
+
+            if (_groundIndicatorObj != null)
+                _groundIndicatorObj.SetActive(!firstPerson);
+        }
+
+        public Vector3 GetFirstPersonEyeWorldPosition(Vector3 facingForward)
+        {
+            float rootY = _bodyRoot != null
+                ? _bodyRoot.position.y
+                : (transform.position.y + 0.92f * _heightScale);
+            float eyeY = rootY + 0.62f * _heightScale;
+            return new Vector3(transform.position.x, eyeY, transform.position.z) + facingForward * 0.16f;
         }
 
         private Transform BuildArm(
@@ -468,10 +542,41 @@ namespace Soccer3D.Visuals
             _actionDuration = duration;
         }
 
+        public void TriggerTrapping(PreferredFoot foot, float duration = 0.36f)
+        {
+            _currentAction = AnimAction.TrapBall;
+            _animKickFoot = foot;
+            _actionTimer = 0f;
+            _actionDuration = duration;
+        }
+
+        public void TriggerHeader(float duration = 0.58f)
+        {
+            _currentAction = AnimAction.Header;
+            _actionTimer = 0f;
+            _actionDuration = duration;
+        }
+
+        public void TriggerBlitzDash(float duration = 0.28f)
+        {
+            _currentAction = AnimAction.BlitzDash;
+            _actionTimer = 0f;
+            _actionDuration = duration;
+        }
+
+        public void TriggerShoulderBarge(float sideSign = 1f, float duration = 0.28f)
+        {
+            _currentAction = AnimAction.ShoulderBarge;
+            _diveDirSign = Mathf.Sign(sideSign == 0f ? 1f : sideSign);
+            _actionTimer = 0f;
+            _actionDuration = duration;
+        }
+
         public void ResetToIdle()
         {
             _currentAction = AnimAction.None;
             _actionTimer = 0f;
+            _jumpHeightOffset = 0f;
             SetChargingFootAura(false, _animKickFoot);
             if (_bodyRoot != null)
             {
@@ -484,7 +589,7 @@ namespace Soccer3D.Visuals
         {
             if (_bodyRoot == null) return;
 
-            float baseRootY = 0.92f * _heightScale;
+            float baseRootY = 0.92f * _heightScale + _jumpHeightOffset;
             float speed = planarVelocity.magnitude;
 
             if (_currentAction != AnimAction.None)
@@ -498,6 +603,21 @@ namespace Soccer3D.Visuals
                     _currentAction = AnimAction.None;
                     SetChargingFootAura(false, _animKickFoot);
                 }
+                return;
+            }
+
+            if (_jumpHeightOffset > 0.05f)
+            {
+                float jumpBlend = Mathf.Clamp01(_jumpHeightOffset / 0.65f);
+                _bodyRoot.localPosition = new Vector3(0f, baseRootY, 0f);
+                _bodyRoot.localRotation = Quaternion.Lerp(_bodyRoot.localRotation, Quaternion.Euler(-6f * jumpBlend, 0f, 0f), dt * 14f);
+                _spine.localRotation = Quaternion.Lerp(_spine.localRotation, Quaternion.Euler(-8f * jumpBlend, 0f, 0f), dt * 14f);
+                _leftHip.localRotation = Quaternion.Lerp(_leftHip.localRotation, Quaternion.Euler(26f * jumpBlend, 0f, -5f), dt * 14f);
+                _rightHip.localRotation = Quaternion.Lerp(_rightHip.localRotation, Quaternion.Euler(-16f * jumpBlend, 0f, 5f), dt * 14f);
+                _leftKnee.localRotation = Quaternion.Lerp(_leftKnee.localRotation, Quaternion.Euler(52f * jumpBlend + 8f, 0f, 0f), dt * 14f);
+                _rightKnee.localRotation = Quaternion.Lerp(_rightKnee.localRotation, Quaternion.Euler(36f * jumpBlend + 8f, 0f, 0f), dt * 14f);
+                _leftShoulder.localRotation = Quaternion.Lerp(_leftShoulder.localRotation, Quaternion.Euler(-48f * jumpBlend, 0f, 30f * jumpBlend), dt * 14f);
+                _rightShoulder.localRotation = Quaternion.Lerp(_rightShoulder.localRotation, Quaternion.Euler(-48f * jumpBlend, 0f, -30f * jumpBlend), dt * 14f);
                 return;
             }
 
@@ -590,10 +710,16 @@ namespace Soccer3D.Visuals
                 case AnimAction.OverheadKick:
                 {
                     float jumpArc = Mathf.Sin(t * Mathf.PI);
-                    float jumpHeight = jumpArc * 1.48f * _heightScale;
+                    float jumpHeight = jumpArc * (IsFirstPersonMode ? 1.25f : 1.48f) * _heightScale;
 
                     float bodyPitch;
-                    if (t < 0.45f)
+                    if (IsFirstPersonMode)
+                    {
+                        // 1인칭 오버헤드킥: 어지러운 360도 카메라 뒤집힘 대신 상체를 역동적으로 뒤로 젖히며
+                        // 빛나는 주발 축구화가 1인칭 시야 한가운데 하늘로 솟구쳐 공을 강타하도록 연출!
+                        bodyPitch = -42f * jumpArc;
+                    }
+                    else if (t < 0.45f)
                         bodyPitch = Mathf.Lerp(0f, -152f, SmoothStep01(t / 0.45f));
                     else if (t < 0.80f)
                         bodyPitch = Mathf.Lerp(-152f, -315f, SmoothStep01((t - 0.45f) / 0.35f));
@@ -604,6 +730,7 @@ namespace Soccer3D.Visuals
                     _bodyRoot.localRotation = Quaternion.Euler(bodyPitch, 0f, sideSign * 10f * jumpArc);
                     _spine.localRotation = Quaternion.Euler(-14f * jumpArc, 0f, 0f);
 
+                    float strikePeakHip = IsFirstPersonMode ? -124f : -108f;
                     if (t < 0.44f)
                     {
                         float p = t / 0.44f;
@@ -617,14 +744,14 @@ namespace Soccer3D.Visuals
                         float p = (t - 0.44f) / 0.28f;
                         plantHip.localRotation = Quaternion.Euler(Mathf.Lerp(-78f, 35f, p), 0f, 0f);
                         plantKnee.localRotation = Quaternion.Euler(45f, 0f, 0f);
-                        kickHip.localRotation = Quaternion.Euler(Mathf.Lerp(52f, -108f, SmoothStep01(Mathf.Min(1f, p * 1.6f))), 0f, 0f);
+                        kickHip.localRotation = Quaternion.Euler(Mathf.Lerp(52f, strikePeakHip, SmoothStep01(Mathf.Min(1f, p * 1.6f))), 0f, 0f);
                         kickKnee.localRotation = Quaternion.Euler(Mathf.Lerp(82f, 4f, SmoothStep01(Mathf.Min(1f, p * 1.6f))), 0f, 0f);
                     }
                     else
                     {
                         float p = (t - 0.72f) / 0.28f;
                         plantHip.localRotation = Quaternion.Euler(Mathf.Lerp(35f, 0f, p), 0f, 0f);
-                        kickHip.localRotation = Quaternion.Euler(Mathf.Lerp(-108f, 0f, p), 0f, 0f);
+                        kickHip.localRotation = Quaternion.Euler(Mathf.Lerp(strikePeakHip, 0f, p), 0f, 0f);
                         kickKnee.localRotation = Quaternion.Euler(18f, 0f, 0f);
                     }
 
@@ -678,6 +805,61 @@ namespace Soccer3D.Visuals
                     break;
                 }
 
+                case AnimAction.TrapBall:
+                {
+                    // 낙하하거나 굴러오는 공을 발바닥/인사이드로 부드럽게 완충(Cushion) 트래핑하는 프로 선수 모션!
+                    float trapArc = Mathf.Sin(t * Mathf.PI);
+                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.08f * trapArc * _heightScale, 0f);
+                    _bodyRoot.localRotation = Quaternion.Euler(6f * trapArc, -sideSign * 12f * trapArc, 0f);
+                    _spine.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
+
+                    kickHip.localRotation = Quaternion.Euler(-18f * trapArc, -sideSign * 24f * trapArc, 0f);
+                    kickKnee.localRotation = Quaternion.Euler(32f * trapArc + 8f, 0f, 0f);
+                    plantHip.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
+                    plantKnee.localRotation = Quaternion.Euler(16f * trapArc + 6f, 0f, 0f);
+
+                    _leftShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, 18f * trapArc);
+                    _rightShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, -18f * trapArc);
+                    break;
+                }
+
+                case AnimAction.Header:
+                {
+                    // 크로스 낙하 타이밍에 공중으로 솟구치며 이마로 강하게 내리꽂는 점프 파워 헤딩 모션!
+                    float jumpArc = Mathf.Sin(t * Mathf.PI);
+                    float jumpY = jumpArc * 0.85f * _heightScale;
+                    _bodyRoot.localPosition = new Vector3(0f, baseRootY + jumpY, 0.18f * jumpArc);
+
+                    float spineSnap;
+                    if (t < 0.38f)
+                    {
+                        float p = t / 0.38f;
+                        spineSnap = Mathf.Lerp(0f, -28f, SmoothStep01(p));
+                    }
+                    else if (t < 0.65f)
+                    {
+                        float p = (t - 0.38f) / 0.27f;
+                        spineSnap = Mathf.Lerp(-28f, 32f, SmoothStep01(p));
+                    }
+                    else
+                    {
+                        float p = (t - 0.65f) / 0.35f;
+                        spineSnap = Mathf.Lerp(32f, 0f, SmoothStep01(p));
+                    }
+
+                    _bodyRoot.localRotation = Quaternion.Euler(spineSnap * 0.75f, 0f, 0f);
+                    _spine.localRotation = Quaternion.Euler(spineSnap, 0f, 0f);
+
+                    _leftHip.localRotation = Quaternion.Euler(18f * jumpArc, 0f, -6f);
+                    _rightHip.localRotation = Quaternion.Euler(18f * jumpArc, 0f, 6f);
+                    _leftKnee.localRotation = Quaternion.Euler(42f * jumpArc, 0f, 0f);
+                    _rightKnee.localRotation = Quaternion.Euler(42f * jumpArc, 0f, 0f);
+
+                    _leftShoulder.localRotation = Quaternion.Euler(-45f * jumpArc, 0f, 35f * jumpArc);
+                    _rightShoulder.localRotation = Quaternion.Euler(-45f * jumpArc, 0f, -35f * jumpArc);
+                    break;
+                }
+
                 case AnimAction.WallJump:
                 {
                     float jump = Mathf.Sin(t * Mathf.PI);
@@ -709,6 +891,34 @@ namespace Soccer3D.Visuals
                     _rightShoulder.localRotation = Quaternion.Euler(-155f, 0f, -25f);
                     _leftHip.localRotation = Quaternion.Euler(-25f * bounce, 0f, -12f);
                     _rightHip.localRotation = Quaternion.Euler(25f * bounce, 0f, 12f);
+                    break;
+                }
+
+                case AnimAction.BlitzDash:
+                {
+                    // 스페이스 2연타 순간 돌진 탈취: 낮은 중심의 폭발적인 전광석화 돌진 자세!
+                    float surge = Mathf.Sin(t * Mathf.PI);
+                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.22f * surge * _heightScale, 0.22f * surge);
+                    _bodyRoot.localRotation = Quaternion.Euler(24f * surge, 0f, 0f);
+                    _spine.localRotation = Quaternion.Euler(18f * surge, 0f, 0f);
+                    _rightHip.localRotation = Quaternion.Euler(-58f * surge, 0f, 0f);
+                    _rightKnee.localRotation = Quaternion.Euler(22f * surge + 8f, 0f, 0f);
+                    _leftHip.localRotation = Quaternion.Euler(52f * surge, 0f, 0f);
+                    _leftKnee.localRotation = Quaternion.Euler(64f * surge + 8f, 0f, 0f);
+                    _leftShoulder.localRotation = Quaternion.Euler(42f * surge, 0f, 22f);
+                    _rightShoulder.localRotation = Quaternion.Euler(-48f * surge, 0f, -22f);
+                    break;
+                }
+
+                case AnimAction.ShoulderBarge:
+                {
+                    // F키 어깨 밀치기 몸싸움 탈취 모션!
+                    float bump = Mathf.Sin(t * Mathf.PI);
+                    _bodyRoot.localPosition = new Vector3(_diveDirSign * 0.18f * bump, baseRootY - 0.08f * bump * _heightScale, 0.12f * bump);
+                    _bodyRoot.localRotation = Quaternion.Euler(10f * bump, -_diveDirSign * 18f * bump, -_diveDirSign * 16f * bump);
+                    _spine.localRotation = Quaternion.Euler(8f * bump, -_diveDirSign * 14f * bump, 0f);
+                    _leftShoulder.localRotation = Quaternion.Euler(-20f * bump, 0f, 38f * bump);
+                    _rightShoulder.localRotation = Quaternion.Euler(-20f * bump, 0f, -38f * bump);
                     break;
                 }
             }

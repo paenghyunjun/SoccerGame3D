@@ -12,10 +12,10 @@ namespace Soccer3D.Gameplay
 
             ConfigureRealisticLighting(root.transform);
 
-            float fieldLen = ShotCalculator.PitchHalfLength * 2f; // 56m
-            float fieldWid = ShotCalculator.PitchHalfWidth * 2f;  // 36m
-            float marginX = 6.5f;
-            float marginZ = 5.5f;
+            float fieldLen = ShotCalculator.PitchHalfLength * 2f; // FIFA 정규 105m
+            float fieldWid = ShotCalculator.PitchHalfWidth * 2f;  // FIFA 정규 68m
+            float marginX = 8.5f;
+            float marginZ = 7.5f;
 
             // 1. 천연 잔디 구장 바닥 (알베도 + 마이크로 잔디 노멀맵 PBR 적용)
             GameObject pitchFloor = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -72,7 +72,7 @@ namespace Soccer3D.Gameplay
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
             RenderSettings.fogColor = new Color(0.07f, 0.10f, 0.17f);
-            RenderSettings.fogDensity = 0.0042f;
+            RenderSettings.fogDensity = 0.0015f; // 105m 정규 구장 반대편 골문까지 선명하게 보이도록 안개 밀도 최적화
 
             Camera mainCam = Camera.main;
             if (mainCam != null)
@@ -262,76 +262,103 @@ namespace Soccer3D.Gameplay
                 staticFriction = 0.25f
             };
 
-            float sideZOffset = halfW + 1.35f;
-            CreateVisualBar("AdBoard_North", root, new Vector3(0f, 0.52f, sideZOffset), new Vector3(halfL * 2f + 4f, 1.04f, 0.22f), boardMatDark);
-            CreateVisualBar("AdStrip_North", root, new Vector3(0f, 0.98f, sideZOffset - 0.12f), new Vector3(halfL * 2f + 3.8f, 0.10f, 0.04f), ledAccentBlue);
-            CreateVisualBar("AdBoard_South", root, new Vector3(0f, 0.52f, -sideZOffset), new Vector3(halfL * 2f + 4f, 1.04f, 0.22f), boardMatDark);
+            float sideZOffset = halfW + 2.35f;
+            CreateVisualBar("AdBoard_North", root, new Vector3(0f, 0.52f, sideZOffset), new Vector3(halfL * 2f + 6f, 1.04f, 0.22f), boardMatDark);
+            CreateVisualBar("AdStrip_North", root, new Vector3(0f, 0.98f, sideZOffset - 0.12f), new Vector3(halfL * 2f + 5.8f, 0.10f, 0.04f), ledAccentBlue);
+            CreateVisualBar("AdBoard_South", root, new Vector3(0f, 0.52f, -sideZOffset), new Vector3(halfL * 2f + 6f, 1.04f, 0.22f), boardMatDark);
+            CreateVisualBar("AdStrip_South", root, new Vector3(0f, 0.98f, -sideZOffset + 0.12f), new Vector3(halfL * 2f + 5.8f, 0.10f, 0.04f), ledAccentBlue);
 
-            AddInvisibleCollider("Wall_North", root, new Vector3(0f, 6f, sideZOffset), new Vector3(halfL * 2f + 10f, 13f, 0.6f), wallBounce);
-            AddInvisibleCollider("Wall_South", root, new Vector3(0f, 6f, -sideZOffset), new Vector3(halfL * 2f + 10f, 13f, 0.6f), wallBounce);
-            AddInvisibleCollider("SkyCeiling", root, new Vector3(0f, 16.5f, 0f), new Vector3(halfL * 2f + 12f, 0.8f, halfW * 2f + 10f), wallBounce);
+            float sideWallZ = halfW + 0.40f;
+            AddInvisibleCollider("Wall_North", root, new Vector3(0f, 18f, sideWallZ), new Vector3(halfL * 2f + 16f, 36f, 0.8f), wallBounce);
+            AddInvisibleCollider("Wall_South", root, new Vector3(0f, 18f, -sideWallZ), new Vector3(halfL * 2f + 16f, 36f, 0.8f), wallBounce);
+            AddInvisibleCollider("SkyCeiling", root, new Vector3(0f, 36.0f, 0f), new Vector3(halfL * 2f + 18f, 1.0f, halfW * 2f + 16f), wallBounce);
 
-            float wingWidth = (halfW + 1.4f) - goalHalfW;
+            float wingWidth = (halfW + 2.4f) - goalHalfW;
             float wingCenterZ = goalHalfW + wingWidth * 0.5f;
 
             int[] signs = { -1, 1 };
             foreach (int sx in signs)
             {
-                float xWall = sx * (halfL + 0.22f);
-                AddInvisibleCollider($"EndWall_{sx}_TopZ", root, new Vector3(xWall, 6f, wingCenterZ), new Vector3(0.5f, 13f, wingWidth), wallBounce);
-                AddInvisibleCollider($"EndWall_{sx}_BotZ", root, new Vector3(xWall, 6f, -wingCenterZ), new Vector3(0.5f, 13f, wingWidth), wallBounce);
-                AddInvisibleCollider($"EndWall_{sx}_AboveGoal", root, new Vector3(xWall, 8.8f, 0f), new Vector3(0.5f, 12f, goalHalfW * 2f), wallBounce);
+                float xWall = sx * (halfL + 0.24f);
+                AddInvisibleCollider($"EndWall_{sx}_TopZ", root, new Vector3(xWall, 18f, wingCenterZ), new Vector3(0.6f, 36f, wingWidth), wallBounce);
+                AddInvisibleCollider($"EndWall_{sx}_BotZ", root, new Vector3(xWall, 18f, -wingCenterZ), new Vector3(0.6f, 36f, wingWidth), wallBounce);
+                AddInvisibleCollider($"EndWall_{sx}_AboveGoal", root, new Vector3(xWall, 19.66f, 0f), new Vector3(0.6f, 34f, goalHalfW * 2f), wallBounce);
 
-                float xBoard = sx * (halfL + 3.1f);
-                CreateVisualBar($"EndBoard_{sx}", root, new Vector3(xBoard, 0.52f, 0f), new Vector3(0.22f, 1.04f, halfW * 2f + 2.8f), boardMatDark);
-                CreateVisualBar($"EndStrip_{sx}", root, new Vector3(xBoard - sx * 0.12f, 0.98f, 0f), new Vector3(0.04f, 0.10f, halfW * 2f + 2.6f), ledAccentGold);
+                float xBoard = sx * (halfL + 3.6f);
+                CreateVisualBar($"EndBoard_{sx}", root, new Vector3(xBoard, 0.52f, 0f), new Vector3(0.22f, 1.04f, halfW * 2f + 4.6f), boardMatDark);
+                CreateVisualBar($"EndStrip_{sx}", root, new Vector3(xBoard - sx * 0.12f, 0.98f, 0f), new Vector3(0.04f, 0.10f, halfW * 2f + 4.4f), ledAccentGold);
             }
         }
 
         private static void BuildStadiumAtmosphere(Transform root)
         {
+            float halfL = ShotCalculator.PitchHalfLength;
+            float halfW = ShotCalculator.PitchHalfWidth;
+
             Material concreteDark = MaterialHelper.CreateLitMaterial(new Color(0.12f, 0.15f, 0.21f), 0.25f);
             Material seatBlue = MaterialHelper.CreateLitMaterial(new Color(0.13f, 0.26f, 0.52f), 0.35f);
             Material seatRed = MaterialHelper.CreateLitMaterial(new Color(0.45f, 0.15f, 0.20f), 0.35f);
             Material roofSteel = MaterialHelper.CreateLitMaterial(new Color(0.18f, 0.21f, 0.27f), 0.65f, 0.55f);
             Material fasciaGlow = MaterialHelper.CreateHdrUnlitMaterial(new Color(0.22f, 0.65f, 1.0f), 2.1f);
-            Material floodGlow = MaterialHelper.CreateHdrUnlitMaterial(new Color(0.98f, 0.97f, 0.92f), 5.2f);
+            Material floodGlow = MaterialHelper.CreateHdrUnlitMaterial(new Color(0.98f, 0.97f, 0.92f), 5.5f);
 
-            // 북측 메인 스탠드 (카메라 정면 5단 관중석 + 상단 지붕 캐노피)
-            for (int tier = 0; tier < 5; tier++)
+            float sideStandBaseZ = halfW + 6.4f;
+            float sideStandLenX = halfL * 2f + 22f;
+
+            // 북측 & 남측 대형 스탠드 (1인칭 360도 시점 어디를 둘러봐도 웅장한 4면 정규 구장 완성!)
+            int[] zSigns = { 1, -1 };
+            foreach (int sz in zSigns)
             {
-                Material m = (tier % 2 == 0) ? seatBlue : concreteDark;
-                CreateVisualBar("NorthStandTier_" + tier, root,
-                    new Vector3(0f, 1.1f + tier * 1.45f, 22.0f + tier * 2.15f),
-                    new Vector3(74f, 1.6f, 2.3f), m);
-            }
-            CreateVisualBar("NorthFasciaRibbon", root, new Vector3(0f, 4.2f, 25.1f), new Vector3(73f, 0.22f, 0.15f), fasciaGlow);
-            GameObject northRoof = CreateVisualBar("NorthRoofCanopy", root, new Vector3(0f, 10.8f, 27.5f), new Vector3(76f, 0.45f, 11.5f), roofSteel);
-            northRoof.transform.localRotation = Quaternion.Euler(8f, 0f, 0f);
+                string label = sz > 0 ? "North" : "South";
+                for (int tier = 0; tier < 6; tier++)
+                {
+                    Material m = (tier % 2 == 0) ? seatBlue : concreteDark;
+                    CreateVisualBar($"{label}StandTier_{tier}", root,
+                        new Vector3(0f, 1.3f + tier * 1.85f, sz * (sideStandBaseZ + tier * 2.55f)),
+                        new Vector3(sideStandLenX, 2.0f, 2.7f), m);
+                }
+                CreateVisualBar($"{label}FasciaRibbon", root,
+                    new Vector3(0f, 5.4f, sz * (sideStandBaseZ + 4.2f)),
+                    new Vector3(sideStandLenX - 2f, 0.28f, 0.18f), fasciaGlow);
 
-            // 서측(좌) & 동측(우) 골대 뒤 스탠드 (프리킥 카메라에서도 리얼한 대형 구장 배경 제공!)
+                GameObject sideRoof = CreateVisualBar($"{label}RoofCanopy", root,
+                    new Vector3(0f, 14.8f, sz * (sideStandBaseZ + 8.5f)),
+                    new Vector3(sideStandLenX + 4f, 0.55f, 14.5f), roofSteel);
+                sideRoof.transform.localRotation = Quaternion.Euler(sz * 8f, 0f, 0f);
+            }
+
+            // 서측(좌) & 동측(우) 골대 뒤 스탠드
+            float endStandBaseX = halfL + 7.4f;
+            float endStandLenZ = halfW * 2f + 18f;
             int[] sideSigns = { -1, 1 };
             foreach (int sx in sideSigns)
             {
                 Material seatMat = sx < 0 ? seatBlue : seatRed;
-                for (int tier = 0; tier < 4; tier++)
+                for (int tier = 0; tier < 5; tier++)
                 {
                     CreateVisualBar($"EndStand_{sx}_{tier}", root,
-                        new Vector3(sx * (33.8f + tier * 2.1f), 1.1f + tier * 1.45f, 0f),
-                        new Vector3(2.3f, 1.6f, 48f), (tier % 2 == 0) ? seatMat : concreteDark);
+                        new Vector3(sx * (endStandBaseX + tier * 2.5f), 1.3f + tier * 1.85f, 0f),
+                        new Vector3(2.7f, 2.0f, endStandLenZ), (tier % 2 == 0) ? seatMat : concreteDark);
                 }
+                CreateVisualBar($"EndFascia_{sx}", root,
+                    new Vector3(sx * (endStandBaseX + 3.8f), 5.2f, 0f),
+                    new Vector3(0.18f, 0.28f, endStandLenZ - 2f), fasciaGlow);
+
                 GameObject endRoof = CreateVisualBar($"EndRoof_{sx}", root,
-                    new Vector3(sx * 38.2f, 9.6f, 0f), new Vector3(9.5f, 0.42f, 50f), roofSteel);
+                    new Vector3(sx * (endStandBaseX + 7.2f), 13.0f, 0f),
+                    new Vector3(13.0f, 0.50f, endStandLenZ + 2f), roofSteel);
                 endRoof.transform.localRotation = Quaternion.Euler(0f, 0f, sx * 8f);
             }
 
-            // 4각 대형 스타디움 조명탑 + 스포트라이트
+            // 4각 초대형 스타디움 조명탑 + 장거리 스포트라이트 (105m x 68m 전 구역 균일 조명)
+            float cornerX = halfL + 9.2f;
+            float cornerZ = halfW + 7.8f;
             Vector3[] corners =
             {
-                new Vector3(-33f, 0f, 22.5f),
-                new Vector3(33f, 0f, 22.5f),
-                new Vector3(-33f, 0f, -22.5f),
-                new Vector3(33f, 0f, -22.5f)
+                new Vector3(-cornerX, 0f, cornerZ),
+                new Vector3(cornerX, 0f, cornerZ),
+                new Vector3(-cornerX, 0f, -cornerZ),
+                new Vector3(cornerX, 0f, -cornerZ)
             };
 
             for (int i = 0; i < corners.Length; i++)
@@ -340,22 +367,22 @@ namespace Soccer3D.Gameplay
                 tower.transform.SetParent(root, false);
                 tower.transform.localPosition = corners[i];
 
-                CreateVisualCylinder("Pylon", tower.transform, new Vector3(0f, 10f, 0f), new Vector3(0.45f, 10f, 0.45f), Quaternion.identity, roofSteel);
+                CreateVisualCylinder("Pylon", tower.transform, new Vector3(0f, 14.5f, 0f), new Vector3(0.62f, 14.5f, 0.62f), Quaternion.identity, roofSteel);
 
-                GameObject headPanel = CreateVisualBar("LampBank", tower.transform, new Vector3(0f, 20.2f, 0f), new Vector3(3.8f, 1.9f, 0.45f), floodGlow);
-                Vector3 toCenter = (Vector3.zero - (corners[i] + Vector3.up * 20f)).normalized;
-                headPanel.transform.rotation = Quaternion.LookRotation(toCenter);
+                GameObject headPanel = CreateVisualBar("LampBank", tower.transform, new Vector3(0f, 29.2f, 0f), new Vector3(5.2f, 2.6f, 0.55f), floodGlow);
+                Vector3 aimSpot = new Vector3(corners[i].x * 0.28f, 0f, 0f);
+                Vector3 toField = (aimSpot - (corners[i] + Vector3.up * 29f)).normalized;
+                headPanel.transform.rotation = Quaternion.LookRotation(toField);
 
-                // 실제 경기장 코너를 비추는 보조 포인트 라이트
                 GameObject spotObj = new GameObject("TowerLight_" + i);
                 spotObj.transform.SetParent(tower.transform, false);
-                spotObj.transform.localPosition = new Vector3(0f, 19.5f, 0f);
-                spotObj.transform.rotation = Quaternion.LookRotation(toCenter);
+                spotObj.transform.localPosition = new Vector3(0f, 28.2f, 0f);
+                spotObj.transform.rotation = Quaternion.LookRotation(toField);
                 Light spot = spotObj.AddComponent<Light>();
                 spot.type = LightType.Spot;
-                spot.spotAngle = 72f;
-                spot.range = 58f;
-                spot.intensity = 3.2f;
+                spot.spotAngle = 82f;
+                spot.range = 138f;
+                spot.intensity = 4.6f;
                 spot.color = new Color(0.95f, 0.97f, 1.0f);
                 spot.shadows = LightShadows.None;
             }

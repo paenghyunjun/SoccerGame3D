@@ -99,7 +99,27 @@ namespace Soccer3D.Effects
             }
 
             // 3. 날아가는 공에 불꽃/레이저 오라 + 트레일 부착!
-            AttachFlightAura(ball, vfxType, coreCol, trailCol, accentCol, isAcrobatic);
+            if (ball != null)
+            {
+                AttachFlightAura(ball, vfxType, coreCol, trailCol, accentCol, isAcrobatic);
+            }
+        }
+
+        /// <summary>
+        /// 스페이스 2연타 순간 돌진 탈취(Blitz Dash) 및 어깨 밀치기 발동 시 소닉 쇼크웨이브 연출
+        /// </summary>
+        public void TriggerDashBurstVfx(Vector3 worldPos, Vector3 dashDir, bool isHeavyBlitz = true)
+        {
+            Vector3 dir = dashDir.sqrMagnitude > 0.001f ? dashDir.normalized : Vector3.forward;
+            Color coreCol = isHeavyBlitz
+                ? new Color(0.15f, 0.96f, 1.0f, 0.95f)
+                : new Color(0.30f, 1.0f, 0.65f, 0.90f);
+            Color accentCol = isHeavyBlitz
+                ? new Color(0.85f, 1.0f, 0.40f, 1.0f)
+                : new Color(1.0f, 0.92f, 0.35f, 1.0f);
+
+            StartCoroutine(SpawnShockwaveRing(worldPos, dir, coreCol, accentCol, isHeavyBlitz ? 1.20f : 0.85f));
+            SpawnImpactBurstParticles(worldPos, -dir, coreCol, accentCol, isHeavyBlitz ? 42 : 24);
         }
 
         public void StopBallAura()
