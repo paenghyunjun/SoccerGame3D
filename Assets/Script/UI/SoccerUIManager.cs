@@ -1688,17 +1688,35 @@ namespace Soccer3D.UI
             CloseStatWindowAndStart();
         }
 
+        private int _lastDisplayedPlayerScore = -1;
+        private int _lastDisplayedAiScore = -1;
+        private int _lastDisplayedTotalSec = -1;
+
+        private static void SetTextIfChanged(UnityEngine.UI.Text label, string newText)
+        {
+            if (label != null && label.text != newText)
+                label.text = newText;
+        }
+
         public void UpdateScoreAndTimer(int playerScore, int aiScore, float remainingSeconds)
         {
-            if (_scoreNumbersText != null)
+            if (_scoreNumbersText != null && (playerScore != _lastDisplayedPlayerScore || aiScore != _lastDisplayedAiScore))
+            {
+                _lastDisplayedPlayerScore = playerScore;
+                _lastDisplayedAiScore = aiScore;
                 _scoreNumbersText.text = $"{playerScore}  :  {aiScore}";
+            }
 
             if (_timerText != null)
             {
                 int totalSec = Mathf.Max(0, Mathf.CeilToInt(remainingSeconds));
-                int mins = totalSec / 60;
-                int secs = totalSec % 60;
-                _timerText.text = $"{mins:00}:{secs:00}";
+                if (totalSec != _lastDisplayedTotalSec)
+                {
+                    _lastDisplayedTotalSec = totalSec;
+                    int mins = totalSec / 60;
+                    int secs = totalSec % 60;
+                    _timerText.text = $"{mins:00}:{secs:00}";
+                }
             }
         }
 
@@ -1750,8 +1768,8 @@ namespace Soccer3D.UI
                     _possessionHudBadge.transform.localScale = new Vector3(badgePulse, badgePulse, 1f);
                     if (_possessionHudBadgeText != null && player.Profile != null)
                     {
-                        _possessionHudBadgeText.text =
-                            $"⚽ 볼 소유 중! [{player.Profile.positionCode} {player.Profile.playerName}] — 좌클릭: 슛 | 우클릭: 패스 | Shift: 치달";
+                        SetTextIfChanged(_possessionHudBadgeText,
+                            $"⚽ 볼 소유 중! [{player.Profile.positionCode} {player.Profile.playerName}] — 좌클릭: 슛 | 우클릭: 패스 | Shift: 치달");
                     }
                 }
             }
@@ -1852,8 +1870,9 @@ namespace Soccer3D.UI
                         _ballRadarArrowImg.color = pointerCol;
 
                     int distM = Mathf.RoundToInt(distToBall);
-                    _ballRadarText.text = $"⚽ {distM}m {stateTag}";
-                    _ballRadarText.color = pointerCol;
+                    SetTextIfChanged(_ballRadarText, $"⚽ {distM}m {stateTag}");
+                    if (_ballRadarText.color != pointerCol)
+                        _ballRadarText.color = pointerCol;
                 }
             }
             else if (_ballRadarRect != null && _ballRadarRect.gameObject.activeSelf)
@@ -1923,14 +1942,15 @@ namespace Soccer3D.UI
 
                 for (int i = 0; i < _fpCrosshairParts.Length; i++)
                 {
-                    if (_fpCrosshairParts[i] != null)
+                    if (_fpCrosshairParts[i] != null && _fpCrosshairParts[i].color != chColor)
                         _fpCrosshairParts[i].color = chColor;
                 }
 
                 if (_fpAimActionLabel != null)
                 {
-                    _fpAimActionLabel.text = aimText;
-                    _fpAimActionLabel.color = chColor;
+                    SetTextIfChanged(_fpAimActionLabel, aimText);
+                    if (_fpAimActionLabel.color != chColor)
+                        _fpAimActionLabel.color = chColor;
                 }
             }
 
@@ -1947,12 +1967,12 @@ namespace Soccer3D.UI
                 {
                     _shotGaugeFill.color = new Color(0.20f, 0.92f, 1.0f);
                     string dir = player.DragCurveBias > 0f ? "우측 커브 ↷" : "좌측 커브 ↶";
-                    _shotGaugeLabel.text = $"🌀 포켓몬고 감아차기 ({dir})";
+                    SetTextIfChanged(_shotGaugeLabel, $"🌀 포켓몬고 감아차기 ({dir})");
                 }
                 else
                 {
                     _shotGaugeFill.color = Color.Lerp(new Color(0.25f, 1f, 0.4f), new Color(1f, 0.30f, 0.15f), c);
-                    _shotGaugeLabel.text = "💥 파워 슛 (좌우 드래그 시 감아차기)";
+                    SetTextIfChanged(_shotGaugeLabel, "💥 파워 슛 (좌우 드래그 시 감아차기)");
                 }
             }
 
@@ -1967,13 +1987,13 @@ namespace Soccer3D.UI
                 _acrobaticPromptBadge.transform.localScale = new Vector3(pulse, pulse, 1f);
                 if (player.CanDoAcrobaticNow)
                 {
-                    _acrobaticPromptText.text = player.AvailableAcrobaticType == ShotType.OverheadKick
+                    SetTextIfChanged(_acrobaticPromptText, player.AvailableAcrobaticType == ShotType.OverheadKick
                         ? "🔥 오버헤드킥 찬스!! [좌클릭]"
-                        : "⚡ 시저스 발리 찬스!! [좌클릭]";
+                        : "⚡ 시저스 발리 찬스!! [좌클릭]");
                 }
                 else
                 {
-                    _acrobaticPromptText.text = "💥 점프 파워 헤딩 찬스!! [좌클릭]";
+                    SetTextIfChanged(_acrobaticPromptText, "💥 점프 파워 헤딩 찬스!! [좌클릭]");
                 }
             }
         }

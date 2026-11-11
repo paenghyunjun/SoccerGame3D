@@ -950,7 +950,11 @@ namespace Soccer3D.Visuals
             if (r != null)
             {
                 r.sharedMaterial = mat;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                // 미세 파츠(눈동자, 눈썹, 귀, 코, 머리카락 조각, 스터드 등)는 그림자 캐스터에서 제외하여 22명 회전 시 렌더링 드로우콜 부하 대폭 절감
+                bool isTinyDetail = localScale.x < 0.12f && localScale.y < 0.12f;
+                r.shadowCastingMode = isTinyDetail
+                    ? UnityEngine.Rendering.ShadowCastingMode.Off
+                    : UnityEngine.Rendering.ShadowCastingMode.On;
             }
             return go;
         }

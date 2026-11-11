@@ -43,6 +43,7 @@ namespace Soccer3D.Core
         }
 
         // 반칙 & 세트피스 상태 (직접 프리킥 / 페널티킥 / 장거리 노월 빌드업 프리킥 지원!)
+        private Coroutine _foulSetupCoroutine;
         private SetPieceType _fkSetPieceType = SetPieceType.DirectFreeKick;
         private SoccerPlayerController _fkKicker;
         private readonly List<SoccerPlayerController> _fkWallDefenders = new List<SoccerPlayerController>();
@@ -633,12 +634,70 @@ namespace Soccer3D.Core
             }
         }
 
+        /// <summary>
+        /// 공이 이미 골라인을 통과했거나 유효슈팅 궤적으로 골문을 향해 날아가고 있는지 판정 (어드밴티지 / 동시 골 인정용)
+        /// </summary>
+        private bool IsBallScoringOrEnteringGoal( out int scoringGoalSign )
+        {
+            scoringGoalSign = 0;
+            if (_ball == null) return false;
+
+            Vector3 p = _ball.transform.position;
+            Vector3 v = _ball.Rb != null ? _ball.Rb.linearVelocity : Vector3.zero;
+
+            bool withinGoalMouthYZ = Mathf.Abs(p.z) <= (ShotCalculator.GoalHalfWidth + 0.15f)
+                                  && p.y <= (ShotCalculator.GoalHeight + 0.20f);
+
+            // 1) 이미 골라인 근처 또는 골문 안쪽으로 진입한 경우
+            if (withinGoalMouthYZ && Mathf.Abs(p.x) >= (ShotCalculator.PitchHalfLength - SoccerBall.BallRadius * 1.2f))
+            {
+                scoringGoalSign = p.x >= 0f ? 1 : -1;
+                return true;
+            }
+
+            // 2) 슈팅된 공이 골문 안쪽을 향해 빠르게 날아가고 있어 곧 골라인을 통과하는 경우 (어드밴티지 룰)
+            if (_ball.CurrentOwner == null && Mathf.Abs(v.x) > 4.5f)
+            {
+                int dirSign = v.x > 0f ? 1 : -1;
+                float goalX = dirSign * ShotCalculator.PitchHalfLength;
+                float distX = (goalX - p.x) * dirSign;
+                if (distX >= -2.5f && distX <= 18.0f)
+                {
+                    float tToGoal = Mathf.Max(0f, distX / Mathf.Abs(v.x));
+                    if (tToGoal <= 0.75f)
+                    {
+                        float predZ = p.z + v.z * tToGoal + 0.5f * _ball.ActiveCurveAcceleration.z * tToGoal * tToGoal;
+                        float predY = p.y + v.y * tToGoal - 0.5f * 9.81f * tToGoal * tToGoal;
+                        if (Mathf.Abs(predZ) <= (ShotCalculator.GoalHalfWidth + 0.25f) &&
+                            predY >= -0.2f && predY <= (ShotCalculator.GoalHeight + 0.25f))
+                        {
+                            // 공격 팀이 찬 공이 상대 골문으로 들어가거나 자책골 궤적인 경우 반칙으로 끊지 않음
+                            scoringGoalSign = dirSign;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
         private void HandleFoulCommitted(FoulEventArgs foul)
         {
             if (_state != MatchState.Playing)
                 return;
 
-            StartCoroutine(FoulAndFreeKickSetupRoutine(foul));
+            // 골이 들어가는 동시에 반칙이 발생했거나 슈팅이 골문으로 빨려 들어가는 중이면 반칙으로 골을 취소하지 않고 득점(어드밴티지) 우선!
+            if (IsBallScoringOrEnteringGoal(out int immediateGoalSign))
+            {
+                if (Mathf.Abs(_ball.transform.position.x) >= (ShotCalculator.PitchHalfLength - SoccerBall.BallRadius * 1.2f))
+                {
+                    HandleGoalTriggered(immediateGoalSign);
+                }
+                return;
+            }
+
+            _foulSetupCoroutine = StartCoroutine(FoulAndFreeKickSetupRoutine(foul));
         }
 
         private IEnumerator FoulAndFreeKickSetupRoutine(FoulEventArgs foul)
@@ -701,7 +760,17 @@ namespace Soccer3D.Core
 
             _ui.ShowGoalCelebrationBanner($"🟨 삐익—! {foulDesc}", $"{offenderName} 경고!  ▶  {awardSide}");
 
-            yield return new WaitForSeconds(1.35f);
+            float foulWaitElapsed = 0f;
+            while (foulWaitElapsed < 1.35f)
+            {
+                if (_state != MatchState.FoulSequence)
+                    yield break;
+                foulWaitElapsed += Time.deltaTime;
+                yield return null;
+            }
+
+            if (_state != MatchState.FoulSequence)
+                yield break;
 
             _ui.HideGoalCelebrationBanner();
 
@@ -1392,8 +1461,15 @@ namespace Soccer3D.Core
 
         private void HandleGoalTriggered(int goalSideSign)
         {
-            if (_state != MatchState.Playing)
+            // 인플레이(Playing) 중이거나, 슛 직후 동시에 반칙 판정(FoulSequence)이 났을 때도 골이 들어가면 반칙을 취소하고 골을 인정!
+            if (_state != MatchState.Playing && _state != MatchState.FoulSequence)
                 return;
+
+            if (_foulSetupCoroutine != null)
+            {
+                StopCoroutine(_foulSetupCoroutine);
+                _foulSetupCoroutine = null;
+            }
 
             StartCoroutine(GoalScoredSequence(goalSideSign));
         }

@@ -67,7 +67,10 @@ namespace Soccer3D.CameraSystem
             if (_cam != null)
             {
                 _cam.nearClipPlane = 0.08f; // 1인칭 팔·축구화 클리핑 방지
+                _cam.farClipPlane = 185f;   // 경기장 전체가 안정적으로 들어오도록 설정
+                _cam.occlusionCulling = false; // 마우스 회전 시 오클루전 재계산 스파이크 방지
                 _cam.fieldOfView = _currentFov;
+                ApplyOmniDirectionalCullingMatrix();
             }
         }
 
@@ -439,6 +442,21 @@ namespace Soccer3D.CameraSystem
 
             transform.position = eyePos + _smoothedRot * localShake;
             transform.rotation = _smoothedRot * Quaternion.Euler(0f, 0f, rollShake);
+
+            // 카메라 뒤쪽(360도 전 방향) 오브젝트도 프러스텀 컬링에서 제외되지 않고 GPU 파이프라인에 상주하도록 전방위 컬링 매트릭스 유지!
+            // 마우스를 급격히 돌릴 때 뒤쪽 선수·관중석·골대가 갑자기 렌더링 큐에 대량 진입하며 생기는 프레임 드랍(렉)을 원천 차단합니다.
+            ApplyOmniDirectionalCullingMatrix();
+        }
+
+        /// <summary>
+        /// 경기장 전체 반경(360도 전 방향)을 포괄하는 직교 컬링 행렬을 적용하여
+        /// 카메라 등 뒤에 있는 오브젝트들도 컬링 해제/재진입으로 인한 버퍼 스파이크 없이 항상 GPU 배칭 상태를 유지하도록 합니다.
+        /// </summary>
+        private void ApplyOmniDirectionalCullingMatrix()
+        {
+            if (_cam == null) return;
+            _cam.cullingMatrix = Matrix4x4.Ortho(-160f, 160f, -80f, 80f, -160f, 160f) *
+                                 Matrix4x4.Translate(-transform.position);
         }
     }
 }

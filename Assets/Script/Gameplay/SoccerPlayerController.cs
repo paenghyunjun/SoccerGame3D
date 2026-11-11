@@ -1858,11 +1858,32 @@ namespace Soccer3D.Gameplay
                     if (isAI)
                         foulChance *= isBackTackle ? 0.28f : 0.42f;
 
-                    if (foulChance > 0f && UnityEngine.Random.value < foulChance)
+                    // 이미 슈팅이 발사되어 골문으로 날아가고 있거나 공이 골라인을 넘어가고 있을 때는 뒤늦은 태클 반칙으로 공 속도를 죽이거나 골을 취소시키지 않음 (어드밴티지)
+                    bool ballHeadingToGoal = false;
+                    if (ball.CurrentOwner == null)
+                    {
+                        Vector3 bp = ball.transform.position;
+                        Vector3 bv = ball.Rb != null ? ball.Rb.linearVelocity : Vector3.zero;
+                        bool nearOrInsideGoal = Mathf.Abs(bp.z) <= (ShotCalculator.GoalHalfWidth + 0.25f)
+                                             && bp.y <= (ShotCalculator.GoalHeight + 0.25f)
+                                             && Mathf.Abs(bp.x) >= (ShotCalculator.PitchHalfLength - 1.5f);
+                        bool shotFlyingToGoal = (ball.IsSuperShotActive || bv.sqrMagnitude > 36f)
+                                             && (bv.x * victimCandidate.attackingGoalSign > 4.0f);
+                        if (nearOrInsideGoal || shotFlyingToGoal)
+                            ballHeadingToGoal = true;
+                    }
+
+                    if (!ballHeadingToGoal && foulChance > 0f && UnityEngine.Random.value < foulChance)
                     {
                         if (ball.CurrentOwner != null)
+                        {
                             ball.ReleaseFromOwner(ball.CurrentOwner, 0.5f);
-                        ball.Rb.linearVelocity = lungeDir * 2.6f + Vector3.up * 0.85f;
+                            ball.Rb.linearVelocity = lungeDir * 2.6f + Vector3.up * 0.85f;
+                        }
+                        else if (oppDistBall <= 1.8f && !ball.IsSuperShotActive)
+                        {
+                            ball.Rb.linearVelocity = lungeDir * 2.6f + Vector3.up * 0.85f;
+                        }
 
                         victimCandidate.PlayFoulFall(lungeDir * 3.8f);
                         if (DynamicSoccerCamera.Instance != null)

@@ -43,6 +43,7 @@ namespace Soccer3D.Visuals
         public static Material CreateLitMaterial(Color baseColor, float smoothness = 0.35f, float metallic = 0f, Color? emissionHdr = null)
         {
             Material mat = new Material(GetLitShader());
+            mat.enableInstancing = true;
             if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", baseColor);
             if (mat.HasProperty("_Color")) mat.SetColor("_Color", baseColor);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
@@ -60,6 +61,7 @@ namespace Soccer3D.Visuals
         public static Material CreateHdrUnlitMaterial(Color baseColor, float hdrIntensity = 3.0f)
         {
             Material mat = new Material(GetUnlitShader());
+            mat.enableInstancing = true;
             Color hdr = new Color(
                 baseColor.r * hdrIntensity,
                 baseColor.g * hdrIntensity,
@@ -75,6 +77,7 @@ namespace Soccer3D.Visuals
         {
             Shader shader = Shader.Find("Sprites/Default");
             Material mat = new Material(shader != null ? shader : GetParticleShader());
+            mat.enableInstancing = true;
 
             Texture2D tex = useRing ? GetRingGlowTexture() : GetSoftGlowTexture();
             mat.mainTexture = tex;

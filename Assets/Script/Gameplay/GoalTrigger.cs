@@ -37,6 +37,16 @@ namespace Soccer3D.Gameplay
 
         private void OnTriggerEnter(Collider other)
         {
+            TryTriggerGoal(other);
+        }
+
+        private void OnTriggerStay(Collider other)
+        {
+            TryTriggerGoal(other);
+        }
+
+        private void TryTriggerGoal(Collider other)
+        {
             SoccerBall ball = other.GetComponent<SoccerBall>();
             if (ball == null && other.attachedRigidbody != null)
                 ball = other.attachedRigidbody.GetComponent<SoccerBall>();

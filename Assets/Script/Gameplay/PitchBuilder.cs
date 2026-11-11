@@ -97,10 +97,14 @@ namespace Soccer3D.Gameplay
             {
                 dirLight.color = new Color(1.0f, 0.96f, 0.90f);
                 dirLight.intensity = 1.75f;
-                dirLight.shadows = LightShadows.Soft;
-                dirLight.shadowStrength = 0.82f;
+                dirLight.shadows = LightShadows.Hard;
+                dirLight.shadowStrength = 0.80f;
                 dirLight.transform.rotation = Quaternion.Euler(44f, -28f, 0f);
             }
+
+            // 마우스 회전 시 그림자 캐스케이드 재계산 부하를 줄여 프레임 드랍 방지
+            QualitySettings.shadowCascades = 2;
+            QualitySettings.shadowDistance = 65f;
 
             // 반대편 보조 림 라이트 (선수 입체감 극대화)
             GameObject rimLightObj = new GameObject("StadiumRimFillLight");
@@ -439,7 +443,9 @@ namespace Soccer3D.Gameplay
             go.transform.SetParent(parent, false);
             go.transform.localPosition = pos;
             go.transform.localScale = scale;
-            go.GetComponent<Renderer>().sharedMaterial = mat;
+            Renderer r = go.GetComponent<Renderer>();
+            r.sharedMaterial = mat;
+            r.shadowCastingMode = ShadowCastingMode.Off;
             return go;
         }
 
