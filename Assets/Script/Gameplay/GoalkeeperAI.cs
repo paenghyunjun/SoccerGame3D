@@ -122,7 +122,7 @@ namespace Soccer3D.Gameplay
             if (ball == null) yield break;
 
             // 커브 예측률 68% (하프라인 뒤 초장거리 슛은 궤적을 95% 완벽히 읽음!)
-            float curveRead = fromBehindHalfway ? 0.95f : 0.68f;
+            float curveRead = fromBehindHalfway ? 0.97f : 0.90f;
             Vector3 predictedCross = meta.targetPoint;
             if (PredictGoalPlaneCrossing(out Vector3 simCross, out float _, curveReadFactor: curveRead))
             {
@@ -135,12 +135,10 @@ namespace Soccer3D.Gameplay
 
             // 골키퍼 난이도 소폭 상향 조정 ("좀 더 아주 좀만 더 잘 막게" + 하프라인 뒤 이상한 슛은 확실히 선방!):
             float attackEdge01 = Mathf.Clamp01(Mathf.InverseLerp(0.35f, 0.98f, quality) * 0.60f + cornerDepth01 * 0.52f);
-            float saveChance = Mathf.Lerp(0.85f, 0.32f, attackEdge01);
+            float saveChance = Mathf.Lerp(0.88f, 0.38f, attackEdge01);
 
             if (isAcrobatic)
                 saveChance -= 0.11f;
-            else if (meta.shotType == ShotType.FinesseCurve)
-                saveChance -= 0.07f;
 
             if (shotDist > 25f)
                 saveChance += Mathf.InverseLerp(25f, 44f, shotDist) * 0.28f;

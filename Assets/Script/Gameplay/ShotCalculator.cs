@@ -1,3 +1,4 @@
+using Soccer3D.CameraSystem;
 using Soccer3D.Data;
 using UnityEngine;
 
@@ -36,12 +37,12 @@ namespace Soccer3D.Gameplay
 
             // 드리블 완전 소유 상태(지상)가 아니고 공이 떠 있어야 함
             float h = ball.HeightAboveGround;
-            if (h < 0.48f || h > 3.75f)
+            if (h < 0.48f || h > 2.95f)
                 return false;
 
             PlayerProfile p = player.Profile;
             float acroNorm = p != null ? Mathf.InverseLerp(45f, 99f, p.acrobatics) : 0.5f;
-            float reachRadius = 3.15f + (p != null ? p.AerialReachBonus : 0f) + acroNorm * 0.65f;
+            float reachRadius = 1.55f + (p != null ? p.AerialReachBonus : 0f) * 0.35f + acroNorm * 0.40f;
 
             Vector3 playerPlanar = new Vector3(player.transform.position.x, 0f, player.transform.position.z);
             Vector3 ballPlanar = new Vector3(ball.transform.position.x, 0f, ball.transform.position.z);
@@ -181,10 +182,8 @@ namespace Soccer3D.Gameplay
 
                 case ShotType.OverheadKick:
                 case ShotType.AcrobaticVolley:
-                    // 아크로바틱 슛: 아크로바틱 스탯 핵심 + 골결정력 + 아크로바틱 보너스(화려한 골 자주 나오도록!)
-                    statAccuracy01 = acroNorm * 0.55f + finNorm * 0.30f + powNorm * 0.15f + 0.10f;
+                    statAccuracy01 = acroNorm * 0.72f + finNorm * 0.20f + powNorm * 0.08f;
                     break;
-
                 default:
                     // 일반 파워 슛: 근거리면 골결정력, 원거리면 중거리 슛 스탯이 정확도 좌우
                     statAccuracy01 = Mathf.Lerp(finNorm, longNorm, longRangeWeight) * 0.75f + powNorm * 0.25f;
@@ -246,14 +245,19 @@ namespace Soccer3D.Gameplay
                 }
 
                 // 좌/우 화살표(←/→)로 코스를 꺾어 찼을 때 화면 좌측(+Z)/우측(-Z) 포스트 조준 반영!
-                if (!usedFirstPersonCrosshairZ && Mathf.Abs(aimInput.x) > 0.25f)
+                bool isBroadcastView = DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast;
+                if (isBroadcastView && Mathf.Abs(aimInput.y) > 0.25f)
+                {
+                    desiredSideZ = Mathf.Sign(aimInput.y) * Random.Range(2.25f, 3.22f);
+                    usedFirstPersonCrosshairZ = true;
+                }
+                else if (!usedFirstPersonCrosshairZ && Mathf.Abs(aimInput.x) > 0.25f)
                 {
                     float screenSideToWorldZ = Mathf.Sign(aimInput.x) * screenRightZSign;
                     desiredSideZ = screenSideToWorldZ * Random.Range(2.30f, 3.25f);
                     usedFirstPersonCrosshairZ = true;
                 }
-            }
-            else
+            }            else
             {
                 desiredSideZ = 0f;
             }
@@ -280,10 +284,10 @@ namespace Soccer3D.Gameplay
                 }
                 else if (shotType == ShotType.FinesseCurve)
                 {
-                    // AI/기본 감아차기: 주발 인사이드 컬 방향으로 파 포스트 구석 조준!
+                    // AI/기본 감아차기: 주발 인사이드 컬 방향으로 파 포스트 안쪽 코너 조준!
                     float curlDirSign = (footUsed == PreferredFoot.Right ? -1f : 1f) * screenRightZSign;
                     if (Mathf.Abs(curlDirSign) < 0.01f) curlDirSign = keeperZ >= 0f ? -1f : 1f;
-                    desiredSideZ = curlDirSign * Random.Range(2.45f, 3.26f);
+                    desiredSideZ = curlDirSign * Random.Range(2.15f, 3.05f);
                 }
                 else
                 {
@@ -316,14 +320,29 @@ namespace Soccer3D.Gameplay
             }
 
             // 아크로바틱 슛은 유저 요청대로 골이 시원시원하게 많이 들어가도록 오차 상한 완화!
-            if ((shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley) && !usedWeakFoot)
+            bool isAcrobaticShot = (shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley);
+            if (isAcrobaticShot)
             {
-                maxErrorZ *= 0.52f;
-                maxErrorY *= 0.48f;
+                float acroErrScale = Mathf.Lerp(1.85f, 0.52f, acroNorm);
+                if (usedWeakFoot) acroErrScale *= 1.25f;
+                maxErrorZ *= acroErrScale;
+                maxErrorY *= acroErrScale;
             }
 
             float finalZ = baseTargetZ + Random.Range(-maxErrorZ, maxErrorZ);
             float finalY = Mathf.Max(0.28f, idealHeight + Random.Range(-maxErrorY * 0.55f, maxErrorY));
+
+            if (isAcrobaticShot)
+            {
+                float mishitChance = Mathf.Clamp01((0.72f - acroNorm) * 0.85f) + (usedWeakFoot ? 0.12f : 0f);
+                if (Random.value < mishitChance)
+                {
+                    float shankSide = Random.value < 0.5f ? -1f : 1f;
+                    finalZ += shankSide * Random.Range(2.4f, 5.2f);
+                    finalY += Random.Range(0.75f, 2.55f);
+                    statAccuracy01 *= 0.45f;
+                }
+            }
 
             Vector3 finalTarget = new Vector3(
                 goalCenter.x + targetGoalSign * 0.35f, // 골라인 안쪽 깊숙이 목표
@@ -340,11 +359,11 @@ namespace Soccer3D.Gameplay
             float shotSpeed = baseSpeed * chargeBoost;
 
             if (shotType == ShotType.OverheadKick)
-                shotSpeed *= 1.12f; // 오버헤드킥 임팩트 쾌감 배가!
+                shotSpeed *= Mathf.Lerp(0.84f, 1.12f, acroNorm);
             else if (shotType == ShotType.AcrobaticVolley)
-                shotSpeed *= 1.07f;
+                shotSpeed *= Mathf.Lerp(0.84f, 1.07f, acroNorm);
             else if (shotType == ShotType.FinesseCurve)
-                shotSpeed *= 0.88f; // 감아차기는 궤적 예술성을 위해 체공시간 살짝 확보
+                shotSpeed *= 0.92f;
 
             if (usedWeakFoot)
                 shotSpeed *= 0.89f;
@@ -358,20 +377,21 @@ namespace Soccer3D.Gameplay
 
             if (shotType == ShotType.FinesseCurve)
             {
-                // 포켓몬고 드래그 감아차기: 드래그 방향(customCurveBias: +우측 / -좌측)으로 강력한 마그누스 커브 회전 부여!
+                // 감아차기(Z+D): 차는 발 기준으로 바깥에서 안쪽으로 자연스럽게 휘어 감기는 마그누스 커브
                 float curlSign = Mathf.Abs(customCurveBias) > 0.01f
                     ? Mathf.Sign(customCurveBias)
                     : ((footUsed == PreferredFoot.Right) ? -1f : 1f);
 
                 float curveMultiplier = Mathf.Abs(customCurveBias) > 0.01f
-                    ? Mathf.Clamp(Mathf.Abs(customCurveBias), 0.90f, 1.65f)
+                    ? Mathf.Clamp(Mathf.Abs(customCurveBias), 0.85f, 1.35f)
                     : 1.0f;
-                float curveStrength = Mathf.Lerp(11.5f, 30.0f, curveNorm) * curveMultiplier;
+                float distCurveScale = Mathf.Lerp(1.05f, 0.56f, Mathf.InverseLerp(18f, 38f, distToGoal));
+                float curveStrength = Mathf.Lerp(5.8f, 12.2f, curveNorm) * curveMultiplier * distCurveScale;
                 if (usedWeakFoot) curveStrength *= 0.68f;
 
-                // 바깥쪽에서 안쪽 포스트로 크게 휘어 감겨 들어오도록 횡가속도 + 살짝 뚝 떨어지는 탑스핀 부여
-                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.19f);
-                spinVel = Vector3.up * (-curlSign * 42f);
+                // 부메랑처럼 과도하게 꺾이지 않는 실제 축구 인사이드 궤적 + 자연스러운 탑스핀 드롭
+                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.14f);
+                spinVel = Vector3.up * (curlSign * 38f);
             }
             else if (shotType == ShotType.OverheadKick || shotType == ShotType.AcrobaticVolley)
             {
@@ -412,9 +432,11 @@ namespace Soccer3D.Gameplay
                 if (fromBehindHalfway)
                     statAccuracy01 *= 0.38f;
             }
-            else if (launchVel.magnitude > shotSpeed * 1.12f)
+            else
             {
-                launchVel = launchVel.normalized * (shotSpeed * 1.12f);
+                float maxVelMult = shotType == ShotType.FinesseCurve ? 1.24f : 1.12f;
+                if (launchVel.magnitude > shotSpeed * maxVelMult)
+                    launchVel = launchVel.normalized * (shotSpeed * maxVelMult);
             }
 
             // 랜덤 임팩트 VFX 선정
@@ -655,16 +677,17 @@ namespace Soccer3D.Gameplay
             Vector3 spinVel;
             if (isCurveShot)
             {
-                // 수비벽 바깥으로 크게 휜 뒤 골문 구석으로 감겨 꽂히는 프리킥 궤적!
+                // 수비벽 바깥으로 휘어 돌아 골문 구석으로 감겨 꽂히는 프리킥 궤적!
                 float curlSign = Mathf.Abs(customCurveBias) > 0.01f
                     ? Mathf.Sign(customCurveBias)
                     : ((footUsed == PreferredFoot.Right) ? -1f : 1f);
                 float mult = Mathf.Abs(customCurveBias) > 0.01f
-                    ? Mathf.Clamp(Mathf.Abs(customCurveBias), 0.90f, 1.55f)
+                    ? Mathf.Clamp(Mathf.Abs(customCurveBias), 0.85f, 1.35f)
                     : 1.0f;
-                float curveStrength = Mathf.Lerp(11.5f, 29.5f, curveNorm) * mult;
-                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.22f);
-                spinVel = Vector3.up * (-curlSign * 40f);
+                float distCurveScale = Mathf.Lerp(1.05f, 0.58f, Mathf.InverseLerp(18f, 38f, distToGoal));
+                float curveStrength = Mathf.Lerp(6.2f, 12.8f, curveNorm) * mult * distCurveScale;
+                magnusAccel = attackRight * (curlSign * curveStrength) + Vector3.down * (curveStrength * 0.15f);
+                spinVel = Vector3.up * (curlSign * 38f);
             }
             else
             {

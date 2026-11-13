@@ -40,11 +40,7 @@ namespace Soccer3D.Gameplay
         private SoccerPlayerController _lockedOutPlayer;
         private Vector3 _lastKickOrigin;
 
-        // 공 위치 & 공중 낙하지점을 바닥에 선명히 표시해주는 링 마커 + 원거리 1인칭 식별용 상단 3D 화살표 비콘
-        private Transform _groundDropMarker;
-        private Material _groundDropMat;
-        private Transform _possessionAuraOuter;
-        private Material _possessionAuraMat;
+        // 원거리 1인칭 식별용 상단 3D 화살표 비콘 및 볼 재질
         private Material _ballMaterial;
         private Transform _overheadBeaconRoot;
 
@@ -93,12 +89,12 @@ namespace Soccer3D.Gameplay
                 r = meshObj.GetComponent<Renderer>();
             }
 
-            // 형광 옐로우-오렌지 매치볼 + 은은한 자체 발광으로 그늘에서도 100% 선명하게 보이도록 설정
+            // 클래식 흑백 매치볼 PBR 머티리얼
             Material mat = MaterialHelper.CreateLitMaterial(
                 Color.white,
-                smoothness: 0.72f,
-                metallic: 0.05f,
-                emissionHdr: new Color(0.32f, 0.24f, 0.02f)
+                smoothness: 0.62f,
+                metallic: 0.04f,
+                emissionHdr: new Color(0.03f, 0.03f, 0.03f)
             );
             Texture2D ballTex = MaterialHelper.GetSoccerBallTexture();
             mat.mainTexture = ballTex;
@@ -107,44 +103,6 @@ namespace Soccer3D.Gameplay
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             _ballMaterial = mat;
 
-            // 바닥 공 위치 & 낙하지점 하이라이트 링 생성
-            if (_groundDropMarker == null)
-            {
-                GameObject markerObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                markerObj.name = "BallGroundRingMarker";
-                Collider mc = markerObj.GetComponent<Collider>();
-                if (Application.isPlaying) Destroy(mc); else DestroyImmediate(mc);
-                markerObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-                Renderer mr = markerObj.GetComponent<Renderer>();
-                _groundDropMat = MaterialHelper.CreateAdditiveVfxMaterial(
-                    new Color(1.0f, 0.88f, 0.18f, 0.92f),
-                    hdrMultiplier: 2.2f,
-                    useRing: true
-                );
-                mr.sharedMaterial = _groundDropMat;
-                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                _groundDropMarker = markerObj.transform;
-            }
-
-            // 공을 잡고 있을 때(볼 소유 중) 선수 발밑과 공 주변에 선명하게 퍼지는 이중 소유 오라 링 생성!
-            if (_possessionAuraOuter == null)
-            {
-                GameObject auraObj = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                auraObj.name = "BallPossessionAuraRing";
-                Collider ac = auraObj.GetComponent<Collider>();
-                if (Application.isPlaying) Destroy(ac); else DestroyImmediate(ac);
-                auraObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-                Renderer ar = auraObj.GetComponent<Renderer>();
-                _possessionAuraMat = MaterialHelper.CreateAdditiveVfxMaterial(
-                    new Color(0.15f, 1.0f, 0.86f, 0.95f),
-                    hdrMultiplier: 3.1f,
-                    useRing: true
-                );
-                ar.sharedMaterial = _possessionAuraMat;
-                ar.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                _possessionAuraOuter = auraObj.transform;
-                _possessionAuraOuter.gameObject.SetActive(false);
-            }
 
             // 105m 대형 구장 1인칭 시점에서도 멀리 있는 공 위치를 한눈에 알려주는 공중 3D 화살표 비콘 (▼)
             if (_overheadBeaconRoot == null)
@@ -181,16 +139,7 @@ namespace Soccer3D.Gameplay
 
         private void OnDestroy()
         {
-            if (_groundDropMarker != null)
-            {
-                if (Application.isPlaying) Destroy(_groundDropMarker.gameObject);
-                else DestroyImmediate(_groundDropMarker.gameObject);
-            }
-            if (_possessionAuraOuter != null)
-            {
-                if (Application.isPlaying) Destroy(_possessionAuraOuter.gameObject);
-                else DestroyImmediate(_possessionAuraOuter.gameObject);
-            }
+
             if (_overheadBeaconRoot != null)
             {
                 if (Application.isPlaying) Destroy(_overheadBeaconRoot.gameObject);
@@ -215,65 +164,8 @@ namespace Soccer3D.Gameplay
 
             if (_ballMaterial != null)
             {
-                Color targetEmission = isHumanPossessing
-                    ? new Color(0.22f, 0.78f, 0.62f) * (1.0f + 0.25f * Mathf.Sin(Time.unscaledTime * 10f))
-                    : new Color(0.32f, 0.24f, 0.02f);
                 if (_ballMaterial.HasProperty("_EmissionColor"))
-                    _ballMaterial.SetColor("_EmissionColor", targetEmission);
-            }
-
-            if (_groundDropMarker != null)
-            {
-                _groundDropMarker.position = new Vector3(p.x, 0.025f, p.z);
-                float h = HeightAboveGround;
-                float distScale = Mathf.Lerp(1.0f, 2.2f, Mathf.InverseLerp(10f, 65f, camDist));
-                float pulse = Mathf.Sin(Time.unscaledTime * 11f) * 0.09f;
-                float ringSize = isHumanPossessing
-                    ? (1.42f + pulse)
-                    : (h > 0.45f
-                        ? Mathf.Lerp(1.15f, 1.95f, Mathf.Clamp01(h / 3.5f)) + Mathf.Sin(Time.unscaledTime * 14f) * 0.08f
-                        : 1.08f) * distScale;
-                _groundDropMarker.localScale = new Vector3(ringSize, ringSize, 1f);
-
-                if (_groundDropMat != null)
-                {
-                    Color ringCol = isHumanPossessing
-                        ? new Color(0.18f, 1.0f, 0.85f, 0.96f) * 2.6f
-                        : new Color(1.0f, 0.88f, 0.18f, 0.92f) * 2.2f;
-                    _groundDropMat.color = ringCol;
-                    if (_groundDropMat.HasProperty("_BaseColor"))
-                        _groundDropMat.SetColor("_BaseColor", ringCol);
-                }
-            }
-
-            if (_possessionAuraOuter != null)
-            {
-                if (_possessionAuraOuter.gameObject.activeSelf != isPossessed)
-                    _possessionAuraOuter.gameObject.SetActive(isPossessed);
-
-                if (isPossessed)
-                {
-                    Vector3 ownerPos = CurrentOwner.transform.position;
-                    Vector3 centerXZ = Vector3.Lerp(new Vector3(ownerPos.x, 0.032f, ownerPos.z), new Vector3(p.x, 0.032f, p.z), 0.55f);
-                    _possessionAuraOuter.position = centerXZ;
-                    float auraPulse = 1.0f + Mathf.Sin(Time.unscaledTime * 9.5f) * 0.11f;
-                    float baseRadius = isHumanPossessing ? 2.35f : 1.95f;
-                    _possessionAuraOuter.localScale = new Vector3(baseRadius * auraPulse, baseRadius * auraPulse, 1f);
-                    _possessionAuraOuter.rotation = Quaternion.Euler(90f, Time.unscaledTime * 95f, 0f);
-
-                    if (_possessionAuraMat != null)
-                    {
-                        bool isBlueTeam = CurrentOwner.attackingGoalSign > 0;
-                        Color auraCol = isHumanPossessing
-                            ? new Color(0.15f, 1.0f, 0.86f, 0.96f) * 3.1f
-                            : (isBlueTeam
-                                ? new Color(0.25f, 0.78f, 1.0f, 0.88f) * 2.4f
-                                : new Color(1.0f, 0.34f, 0.22f, 0.90f) * 2.5f);
-                        _possessionAuraMat.color = auraCol;
-                        if (_possessionAuraMat.HasProperty("_BaseColor"))
-                            _possessionAuraMat.SetColor("_BaseColor", auraCol);
-                    }
-                }
+                    _ballMaterial.SetColor("_EmissionColor", new Color(0.03f, 0.03f, 0.03f));
             }
 
             if (_overheadBeaconRoot != null)
@@ -321,9 +213,9 @@ namespace Soccer3D.Gameplay
                 new Vector2(transform.position.x, transform.position.z),
                 new Vector2(_lastKickOrigin.x, _lastKickOrigin.z));
 
-            if (travelDist > 18.0f && Rb.linearVelocity.sqrMagnitude > 2.25f)
+            if (_magnusTimer <= 0f && travelDist > 26.0f && Rb.linearVelocity.sqrMagnitude > 2.25f)
             {
-                float distRatio = Mathf.InverseLerp(18.0f, 56.0f, travelDist);
+                float distRatio = Mathf.InverseLerp(26.0f, 58.0f, travelDist);
                 float progressiveDecel = Mathf.Lerp(0.16f, 1.38f, distRatio * distRatio);
                 float decay = Mathf.Exp(-progressiveDecel * Time.fixedDeltaTime);
                 Vector3 v = Rb.linearVelocity;
@@ -363,7 +255,7 @@ namespace Soccer3D.Gameplay
             }
 
             // 1) 좌우 터치라인(Z축) 이탈 방지: 라인 밖으로 나가서 못 잡는 현상이 절대 발생하지 않도록 구장 안쪽으로 즉시 바운스 복귀!
-            float maxZ = ShotCalculator.PitchHalfWidth - BallRadius * 0.5f;
+            float maxZ = ShotCalculator.PitchHalfWidth - BallRadius;
             if (Mathf.Abs(p.z) > maxZ)
             {
                 float signZ = Mathf.Sign(p.z);
@@ -371,7 +263,7 @@ namespace Soccer3D.Gameplay
                 posAdjusted = true;
                 if (vel.z * signZ >= -0.5f)
                 {
-                    vel.z = -signZ * Mathf.Max(Mathf.Abs(vel.z) * 0.62f, 2.6f);
+                    vel.z = -signZ * Mathf.Max(Mathf.Abs(vel.z) * 0.72f, 3.2f);
                 }
             }
 

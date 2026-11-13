@@ -67,6 +67,6 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "SoccerGame3D.slnx",
+    "dotnet.defaultSolution": "Soccer3D.slnx",
     "dotnet.enableWorkspaceBasedDevelopment": false
 }

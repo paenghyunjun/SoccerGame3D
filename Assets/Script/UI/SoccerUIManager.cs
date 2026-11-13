@@ -296,14 +296,14 @@ namespace Soccer3D.UI
                 new Vector2(22f, 20f), new Vector2(630f, 305f), PanelShape.Rounded);
 
             string guideStr =
-                "<color=#E2E6ED><b>[1인칭 11 vs 11 풀코트 조작 가이드]</b></color>\n" +
-                "• <b>WASD</b> : 이동  |  <b>마우스</b> : 360° 시야  |  <b>Shift</b> : <color=#C8D0DC><b>달리기</b></color>  |  <b>R</b> : <color=#C8D0DC><b>태클 (Shift+R 슬라이딩)</b></color>\n" +
-                "• <b>C / 1~0</b> (수비시 <b>Q</b>) : <color=#C8D0DC><b>우리 팀 선수 전환</b></color>  |  <b>E</b> : 치고 달리기\n" +
-                "• <b>Space (한번)</b> : <color=#C8D0DC><b>점프</b></color> (공중볼 차단 · 태클 회피 · 수비벽 블로킹)\n" +
-                "• <b>Space 두번 (연타)</b> : ⚡ <color=#E2E6ED><b>순간 돌진 볼 탈취!</b></color>  |  <b>F</b> : 🛡️ <b>어깨 몸싸움 탈취</b>\n" +
-                "• <b>우클릭</b> : <color=#C8D0DC><b>패스</b></color> (동료 연결 시 자동 전환! | <b>Q+우클릭</b> : <color=#C8D0DC><b>크로스</b></color>)\n" +
-                "• <b>좌클릭</b> : 슛 (공중볼 <color=#E2E6ED><b>오버헤드킥 / 헤딩</b></color> | 볼 소유시 <b>Q</b> 띄우기)\n" +
-                "• <b>좌클릭 드래그 후 드롭</b> : 🌀 <color=#C8D0DC><b>포켓몬고식 감아차기</b></color> (원하는 방향 스와이프!)";
+                "<color=#E2E6ED><b>[FIFA 표준 조작 가이드 (3인칭 중계)]</b></color>\n" +
+                "• <b>방향키 (↑↓←→)</b> : 이동·방향  |  <b>E</b> : <color=#C8D0DC><b>달리기</b></color>  |  <b>Shift (홀드)</b> : <color=#C8D0DC><b>치고 달리기(치달)</b></color>\n" +
+                "• <b>S</b> : 짧은 패스 (수비시 <b>S/Q</b> 선수 전환)  |  <b>W</b> : 스루패스 (<b>Q+W</b> 로빙스루)\n" +
+                "• <b>Space</b> : 태클 (<b>E+Space</b> 슬라이딩) | <b>F</b> : 어깨몸싸움 | <b>V</b> : 시점전환 | <b>1~0</b> : 선수선택\n" +
+                "• <b>A</b> : 크로스·로빙패스 (수비시 <b>A</b> 슬라이딩 태클)\n" +
+                "• <b>D</b> : <color=#E2E6ED><b>슛 · 헤딩 · 발리</b></color> (수비시 <b>D</b> 스탠딩 태클 | <b>Z+D</b> : 감아차기!)\n" +
+                "• <b>Q (단타)</b> : 동료 침투  |  <b>마우스</b> : 좌클릭 슛(드래그 감아차기) · 우클릭 패스\n" +
+                "• <b>C / 1~0</b> : 선수 전환  |  <b>Z</b> : 정밀 드리블/감아차기 보조";
 
             CreateText("ControlsGuideText", keyGuideBox.transform, guideStr, 14, FontStyle.Normal,
                 new Color(0.88f, 0.90f, 0.94f), TextAnchor.MiddleLeft,
@@ -358,7 +358,7 @@ namespace Soccer3D.UI
             CreatePanel("PossessionTopGlowBar", _possessionHudBadge.transform, new Color(0.82f, 0.85f, 0.90f, 0.80f),
                 new Vector2(0.15f, 0.95f), new Vector2(0.85f, 0.95f), new Vector2(0.5f, 1f), Vector2.zero, new Vector2(0f, 2f), PanelShape.Pill);
             _possessionHudBadgeText = CreateText("PossessionHudLabel", _possessionHudBadge.transform,
-                "⚡ [볼 소유 중 — DRIBBLING]  우클릭: 패스  |  좌클릭: 슛·감아차기  |  E: 치고달리기", 17, FontStyle.Bold,
+                "⚡ [볼 소유 중 — DRIBBLING]  S: 패스  |  W: 스루  |  A: 크로스  |  D: 슛 (Z+D 감아차기)  |  E: 달리기  |  Shift: 치달", 17, FontStyle.Bold,
                 new Color(0.92f, 0.94f, 0.97f), TextAnchor.MiddleCenter,
                 Vector2.zero, Vector2.one, new Vector2(10f, 2f), new Vector2(-10f, -2f));
             _possessionHudBadge.SetActive(false);
@@ -446,7 +446,7 @@ namespace Soccer3D.UI
                 new Vector2(0f, -6f), new Vector2(276f, 44f), PanelShape.Pill);
 
             _acrobaticPromptText = CreateText("AcrobaticPromptLabel", _acrobaticPromptBadge.transform,
-                "⚡ 오버헤드킥 찬스! [좌클릭]", 20, FontStyle.Bold,
+                "⚡ 오버헤드킥 찬스! [D]", 20, FontStyle.Bold,
                 new Color(0.92f, 0.94f, 0.97f), TextAnchor.MiddleCenter,
                 Vector2.zero, Vector2.one, Vector2.zero, Vector2.zero);
             _acrobaticPromptBadge.SetActive(false);
@@ -485,7 +485,7 @@ namespace Soccer3D.UI
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
                 new Vector2(24f, 0f), new Vector2(20f, 5f)).GetComponent<UnityEngine.UI.Image>();
 
-            _freeKickModeLabel = CreateText("FkModeBadge", reticleRoot.transform, "🎯 파워 프리킥 [좌클릭]", 16, FontStyle.Bold,
+            _freeKickModeLabel = CreateText("FkModeBadge", reticleRoot.transform, "🎯 파워 프리킥 [D]", 16, FontStyle.Bold,
                 Color.white, TextAnchor.MiddleCenter,
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(-115f, 38f), new Vector2(115f, 66f));
 
@@ -1729,8 +1729,9 @@ namespace Soccer3D.UI
             if (_mainCam == null) return;
 
             bool fkActive = _freeKickHudRoot != null && _freeKickHudRoot.activeSelf;
-            if (_fpCrosshairRoot != null && _fpCrosshairRoot.activeSelf == fkActive)
-                _fpCrosshairRoot.SetActive(!fkActive);
+            bool hideCrosshair = fkActive || (DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast);
+            if (_fpCrosshairRoot != null && _fpCrosshairRoot.activeSelf == hideCrosshair)
+                _fpCrosshairRoot.SetActive(!hideCrosshair);
 
             // =====================================================================
             // 볼 소유(드리블) 시 1인칭 크로스헤어 골드/시안 링 + 하단 드리블 배지 점등!
@@ -1769,7 +1770,7 @@ namespace Soccer3D.UI
                     if (_possessionHudBadgeText != null && player.Profile != null)
                     {
                         SetTextIfChanged(_possessionHudBadgeText,
-                            $"⚽ 볼 소유 중! [{player.Profile.positionCode} {player.Profile.playerName}] — 좌클릭: 슛 | 우클릭: 패스 | Shift: 치달");
+                            $"⚽ 볼 소유 중! [{player.Profile.positionCode} {player.Profile.playerName}] — D: 슛(Z+D 감아차기) | S: 패스 | W: 스루 | A: 크로스 | E: 달리기 | Shift: 치달");
                     }
                 }
             }
@@ -1909,8 +1910,8 @@ namespace Soccer3D.UI
                         ? player.CurrentAimTargetPlayer.Profile.playerName : "동료";
                     bool mateHasBall = player.ball != null && player.ball.CurrentOwner == player.CurrentAimTargetPlayer;
                     aimText = mateHasBall
-                        ? $"📢 {mateName}에게 패스 콜 [우클릭] | 선수 전환 [C]"
-                        : $"🎯 {mateName}에게 패스 [우클릭] | 크로스 [Q+우클릭]";
+                        ? $"📢 {mateName}에게 패스 콜 [S] | 선수 전환 [C]"
+                        : $"🎯 {mateName}에게 패스 [S] | 크로스 [A]";
                 }
                 else if (player.CurrentAimTargetType == AimTargetType.Opponent)
                 {
@@ -1918,14 +1919,14 @@ namespace Soccer3D.UI
                     string oppName = player.CurrentAimTargetPlayer != null && player.CurrentAimTargetPlayer.Profile != null
                         ? player.CurrentAimTargetPlayer.Profile.playerName : "상대";
                     string tackleLabel = player.IsSprintingNow ? "슬라이딩 태클" : "태클";
-                    aimText = $"💥 {oppName} {tackleLabel} [R]  |  몸싸움 [F]  |  순간돌진 [Space×2]";
+                    aimText = $"💥 {oppName} {tackleLabel} [Space / D]  |  슬라이딩 [A]  |  몸싸움 [F]";
                 }
                 else if (player.CanDoAcrobaticNow && !player.IsPerformingAcrobatic)
                 {
                     chColor = new Color(1.0f, 0.62f, 0.14f, 0.98f);
                     aimText = player.AvailableAcrobaticType == ShotType.OverheadKick
-                        ? "🔥 공 에임 포착!! 지금 [좌클릭] 오버헤드킥!!"
-                        : "⚡ 공 에임 포착!! 지금 [좌클릭] 시저스 발리!!";
+                        ? "🔥 오버헤드킥 찬스!! [D]"
+                        : "⚡ 시저스 발리 찬스!! [D]";
                 }
                 else if (player.IsBallInAcrobaticRangeWithoutAim && !player.IsPerformingAcrobatic)
                 {
@@ -1988,12 +1989,12 @@ namespace Soccer3D.UI
                 if (player.CanDoAcrobaticNow)
                 {
                     SetTextIfChanged(_acrobaticPromptText, player.AvailableAcrobaticType == ShotType.OverheadKick
-                        ? "🔥 오버헤드킥 찬스!! [좌클릭]"
-                        : "⚡ 시저스 발리 찬스!! [좌클릭]");
+                        ? "🔥 오버헤드킥 찬스!! [D]"
+                        : "⚡ 시저스 발리 찬스!! [D]");
                 }
                 else
                 {
-                    SetTextIfChanged(_acrobaticPromptText, "💥 점프 파워 헤딩 찬스!! [좌클릭]");
+                    SetTextIfChanged(_acrobaticPromptText, "💥 헤딩 찬스!! [D]");
                 }
             }
         }
@@ -2025,17 +2026,17 @@ namespace Soccer3D.UI
                 if (isPenaltyKick)
                 {
                     _freeKickBannerText.text =
-                        "⚽ <b>페널티킥(PK) 1대1 찬스!!</b>  마우스/WASD로 골문 구석을 조준하고 <b>[좌클릭 / 좌우 드래그&드롭]</b>으로 슛을 차세요!";
+                        "⚽ <b>페널티킥(PK) 1대1 찬스!!</b>  방향키로 골문 구석을 조준하고 <b>[D]</b>로 슛 (<b>[Z+D]</b> 감아차기)!";
                 }
                 else if (isDistantPassKick)
                 {
                     _freeKickBannerText.text =
-                        "⚽ <b>프리킥 빌드업 (장거리 — 수비벽 없음)</b>  원하는 동료 방향을 보고 <b>[좌클릭 / 우클릭]</b>을 누르면 패스로 경기를 재개합니다! ([Q+우클릭] 롱크로스)";
+                        "⚽ <b>프리킥 빌드업 (장거리 — 수비벽 없음)</b>  방향키로 동료 방향을 조준하고 <b>[S]</b> 패스 · <b>[A]</b> 롱크로스!";
                 }
                 else
                 {
                     _freeKickBannerText.text =
-                        "🎯 <b>직접 프리킥 찬스!</b>  [좌클릭 / 좌우 드래그&드롭] 직접슛·감아차기  |  <b>[우클릭] 동료 패스</b>  |  <b>[Q+우클릭] 침투 헤딩 크로스</b>";
+                        "🎯 <b>직접 프리킥 찬스!</b>  [D] 직접슛 (Z+D 감아차기)  |  <b>[S] 동료 패스</b>  |  <b>[A] 침투 헤딩 크로스</b>";
                 }
 
                 SoccerPlayerController passTargetMate = (!isPenaltyKick && humanKicker != null && humanKicker.CurrentAimTargetType == AimTargetType.Teammate && humanKicker.CurrentAimTargetPlayer != null)
@@ -2067,8 +2068,8 @@ namespace Soccer3D.UI
                     if (_freeKickModeLabel != null)
                     {
                         _freeKickModeLabel.text = isDistantPassKick
-                            ? $"🎯 {mName}에게 프리킥 패스 재개 [좌클릭 / 우클릭]"
-                            : $"🎯 {mName}에게 프리킥 패스 [좌클릭]";
+                            ? $"🎯 {mName}에게 프리킥 패스 재개 [S]"
+                            : $"🎯 {mName}에게 프리킥 패스 [S]";
                         _freeKickModeLabel.color = passCol;
                     }
                     if (_freeKickGaugeObj != null) _freeKickGaugeObj.SetActive(false);
@@ -2109,13 +2110,13 @@ namespace Soccer3D.UI
                     {
                         _freeKickModeLabel.text = isCurveMode
                             ? "🌀 포켓몬고 감아차기 페널티킥! (드롭 시 발사)"
-                            : "⚽ 페널티킥(PK) 조준 (좌클릭 슛 | 드래그 감아차기)";
+                            : "⚽ 페널티킥(PK) 조준 ([D] 슛 | [Z+D] 감아차기)";
                     }
                     else
                     {
                         _freeKickModeLabel.text = isCurveMode
                             ? "🌀 포켓몬고 감아차기 프리킥! (드롭 시 발사)"
-                            : "💥 프리킥 조준 (좌클릭 슛 | 드래그 감아차기)";
+                            : "💥 프리킥 조준 ([D] 슛 | [Z+D] 감아차기)";
                     }
                     _freeKickModeLabel.color = aimCol;
                 }

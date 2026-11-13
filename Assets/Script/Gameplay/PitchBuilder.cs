@@ -237,10 +237,10 @@ namespace Soccer3D.Gameplay
             // 골라인 통과 감지 트리거
             GameObject trigObj = new GameObject("GoalScoreTrigger");
             trigObj.transform.SetParent(goalRoot.transform, false);
-            trigObj.transform.localPosition = new Vector3(sideSign * (depth * 0.52f), height * 0.48f, 0f);
+            trigObj.transform.localPosition = new Vector3(sideSign * (depth * 0.55f), height * 0.48f, 0f);
             BoxCollider trigBox = trigObj.AddComponent<BoxCollider>();
             trigBox.isTrigger = true;
-            trigBox.size = new Vector3(depth * 0.80f, height * 0.92f, halfW * 1.94f);
+            trigBox.size = new Vector3(depth * 0.78f, height * 0.94f, halfW * 1.94f);
 
             GoalTrigger gt = trigObj.AddComponent<GoalTrigger>();
             gt.goalSideSign = sideSign;
@@ -272,7 +272,7 @@ namespace Soccer3D.Gameplay
             CreateVisualBar("AdBoard_South", root, new Vector3(0f, 0.52f, -sideZOffset), new Vector3(halfL * 2f + 6f, 1.04f, 0.22f), boardMatDark);
             CreateVisualBar("AdStrip_South", root, new Vector3(0f, 0.98f, -sideZOffset + 0.12f), new Vector3(halfL * 2f + 5.8f, 0.10f, 0.04f), ledAccentBlue);
 
-            float sideWallZ = halfW + 0.40f;
+            float sideWallZ = halfW + 0.15f;
             AddInvisibleCollider("Wall_North", root, new Vector3(0f, 18f, sideWallZ), new Vector3(halfL * 2f + 16f, 36f, 0.8f), wallBounce);
             AddInvisibleCollider("Wall_South", root, new Vector3(0f, 18f, -sideWallZ), new Vector3(halfL * 2f + 16f, 36f, 0.8f), wallBounce);
             AddInvisibleCollider("SkyCeiling", root, new Vector3(0f, 36.0f, 0f), new Vector3(halfL * 2f + 18f, 1.0f, halfW * 2f + 16f), wallBounce);
@@ -283,7 +283,8 @@ namespace Soccer3D.Gameplay
             int[] signs = { -1, 1 };
             foreach (int sx in signs)
             {
-                float xWall = sx * (halfL + 0.24f);
+                // 골라인(X축): 선수들이 골라인을 넘어 그물 옆이나 골대 뒤로 자유롭게 이동할 수 있도록 광고판 뒤(halfL + 3.75f)로 배치
+                float xWall = sx * (halfL + 3.75f);
                 AddInvisibleCollider($"EndWall_{sx}_TopZ", root, new Vector3(xWall, 18f, wingCenterZ), new Vector3(0.6f, 36f, wingWidth), wallBounce);
                 AddInvisibleCollider($"EndWall_{sx}_BotZ", root, new Vector3(xWall, 18f, -wingCenterZ), new Vector3(0.6f, 36f, wingWidth), wallBounce);
                 AddInvisibleCollider($"EndWall_{sx}_AboveGoal", root, new Vector3(xWall, 19.66f, 0f), new Vector3(0.6f, 34f, goalHalfW * 2f), wallBounce);

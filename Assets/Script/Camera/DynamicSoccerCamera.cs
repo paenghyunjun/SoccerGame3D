@@ -51,7 +51,16 @@ namespace Soccer3D.CameraSystem
         private Vector3 _switchStartPos;
         private Quaternion _switchStartRot = Quaternion.identity;
 
-        private float _currentFov = BaseFirstPersonFov;
+        public bool UseThirdPersonBroadcast { get; set; } = true;
+        private Vector3 _smoothedCamPos;
+        private bool _hasSmoothedCamPos;
+        private SoccerBall _cachedBall;
+        private Transform _cachedBallTransform;
+
+        private float _currentFov = ThirdPersonBroadcastFov;
+        private const float ThirdPersonBroadcastFov = 36.5f;
+        private const float ThirdPersonSprintFov = 38.2f;
+        private const float ThirdPersonCelebrationFov = 42.0f;
         private const float BaseFirstPersonFov = 78.0f;
         private const float SprintFirstPersonFov = 84.5f;
         private const float BlitzDashFirstPersonFov = 86.0f;
@@ -63,12 +72,12 @@ namespace Soccer3D.CameraSystem
         {
             Instance = this;
             _cam = GetComponent<Camera>();
-            _currentFov = BaseFirstPersonFov;
+            _currentFov = UseThirdPersonBroadcast ? ThirdPersonBroadcastFov : BaseFirstPersonFov;
             if (_cam != null)
             {
                 _cam.nearClipPlane = 0.08f; // 1인칭 팔·축구화 클리핑 방지
                 _cam.farClipPlane = 185f;   // 경기장 전체가 안정적으로 들어오도록 설정
-                _cam.occlusionCulling = false; // 마우스 회전 시 오클루전 재계산 스파이크 방지
+                _cam.useOcclusionCulling = false; // 마우스 회전 시 오클루전 재계산 스파이크 방지
                 _cam.fieldOfView = _currentFov;
                 ApplyOmniDirectionalCullingMatrix();
             }
@@ -162,11 +171,11 @@ namespace Soccer3D.CameraSystem
         /// </summary>
         public void BeginAcrobaticWindupZoom(Transform striker, float tremorIntensity = 0.065f)
         {
+            if (striker == null || (playerTarget != null && striker != playerTarget)) return;
             _acrobaticZoomActive = true;
             _focusActor = striker;
             _acrobaticShakeIntensity = tremorIntensity;
         }
-
         public void EndAcrobaticWindupZoom()
         {
             _acrobaticZoomActive = false;
@@ -227,6 +236,7 @@ namespace Soccer3D.CameraSystem
             // 1. 경기 시작 전 라인업 소개 방송 중계 뷰: 현재 소개 중인 선수를 화면 우측에 3D로 세워놓고 클로즈업!
             if (_preMatchMode)
             {
+                _hasSmoothedCamPos = false;
                 UpdatePlayerFirstPersonMeshState(false);
                 _preMatchSpotlightHoldTime += dt;
 
@@ -297,6 +307,12 @@ namespace Soccer3D.CameraSystem
             }
 
             // 2. 인게임 전 구간 1인칭 선수 시점(First-Person POV)!
+            if (UseThirdPersonBroadcast)
+            {
+                UpdateThirdPersonBroadcastCamera(dt);
+                return;
+            }
+
             UpdatePlayerFirstPersonMeshState(true);
 
             Vector3 eyePos = humanController != null
@@ -452,6 +468,130 @@ namespace Soccer3D.CameraSystem
         /// 경기장 전체 반경(360도 전 방향)을 포괄하는 직교 컬링 행렬을 적용하여
         /// 카메라 등 뒤에 있는 오브젝트들도 컬링 해제/재진입으로 인한 버퍼 스파이크 없이 항상 GPU 배칭 상태를 유지하도록 합니다.
         /// </summary>
+        private void UpdateThirdPersonBroadcastCamera(float dt)
+        {
+            UpdatePlayerFirstPersonMeshState(false);
+
+            if (_blitzDashFovTimer > 0f)
+                _blitzDashFovTimer -= dt;
+
+            Vector3 pPos = playerTarget != null ? playerTarget.position : Vector3.zero;
+            Vector3 bPos = ballTarget != null ? ballTarget.position : pPos;
+
+            if (ballTarget != null && ballTarget != _cachedBallTransform)
+            {
+                _cachedBallTransform = ballTarget;
+                _cachedBall = ballTarget.GetComponent<SoccerBall>();
+            }
+
+            bool isAttackingPhase = false;
+            int myGoalSign = humanController != null ? humanController.attackingGoalSign : 1;
+            if (_cachedBall != null)
+            {
+                if (_cachedBall.CurrentOwner != null)
+                    isAttackingPhase = _cachedBall.CurrentOwner.attackingGoalSign == myGoalSign;
+                else if (_cachedBall.LastTouchPlayer != null)
+                    isAttackingPhase = _cachedBall.LastTouchPlayer.attackingGoalSign == myGoalSign;
+            }
+
+            Vector3 desiredCamPos;
+            Vector3 desiredLookAt;
+            float desiredFov = ThirdPersonBroadcastFov;
+            float posLerpSpeed = 7.2f;
+            float rotLerpSpeed = 9.5f;
+
+            if (_goalFocusTimer > 0f && _goalCelebrator != null)
+            {
+                _goalFocusTimer -= dt;
+                Vector3 celebPos = _goalCelebrator.position;
+                Vector3 fwd = _goalCelebrator.forward;
+                if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.right;
+                fwd.y = 0f;
+                fwd.Normalize();
+                Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+                desiredCamPos = celebPos + fwd * 4.5f + right * 1.15f + Vector3.up * 1.72f;
+                desiredLookAt = celebPos + Vector3.up * 1.18f;
+                desiredFov = ThirdPersonCelebrationFov;
+                posLerpSpeed = 6.0f;
+                rotLerpSpeed = 8.0f;
+            }
+            else if (_goalFocusTimer > 0f)
+            {
+                _goalFocusTimer -= dt;
+                Vector3 target = new Vector3(bPos.x, 1.3f, bPos.z * 0.5f);
+                desiredCamPos = new Vector3(target.x * 0.85f, 11.5f, -18.5f + target.z * 0.4f);
+                desiredLookAt = target;
+                desiredFov = 35.0f;
+            }
+            else if (_acrobaticZoomActive && _focusActor != null && _focusActor == playerTarget)
+            {
+                Vector3 actorPos = _focusActor.position;
+                Vector3 mid = Vector3.Lerp(actorPos, bPos, 0.5f);
+                desiredCamPos = new Vector3(mid.x * 0.90f, 12.2f, -20.5f + mid.z * 0.42f);
+                desiredLookAt = mid + Vector3.up * 1.0f;
+                desiredFov = 32.5f;
+                posLerpSpeed = 9.0f;
+            }
+            else if (_freeKickMode)
+            {
+                Vector3 focusPt = _freeKickHumanIsKicker ? pPos : Vector3.Lerp(pPos, _freeKickBallPos, 0.35f);
+                desiredCamPos = new Vector3(focusPt.x, 16.4f, Mathf.Clamp(focusPt.z - 22.0f, -38.5f, -6.0f));
+                desiredLookAt = new Vector3(focusPt.x, 0.85f, focusPt.z);
+                desiredFov = 35.5f;
+            }
+            else
+            {
+                Vector3 camFocus = isAttackingPhase ? bPos : pPos;
+                desiredCamPos = new Vector3(
+                    camFocus.x,
+                    17.8f,
+                    Mathf.Clamp(camFocus.z - 23.5f, -38.5f, -6.0f)
+                );
+                desiredLookAt = new Vector3(
+                    camFocus.x,
+                    0.65f,
+                    camFocus.z
+                );
+
+                if (_blitzDashFovTimer > 0f)
+                    desiredFov = ThirdPersonSprintFov + 1.0f;
+                else if (humanController != null && humanController.IsSprintingNow)
+                    desiredFov = ThirdPersonSprintFov;
+            }
+
+            if (!_hasSmoothedCamPos)
+            {
+                _smoothedCamPos = desiredCamPos;
+                _hasSmoothedCamPos = true;
+            }
+            else
+            {
+                _smoothedCamPos = Vector3.Lerp(_smoothedCamPos, desiredCamPos, 1f - Mathf.Exp(-posLerpSpeed * dt));
+            }
+
+            Vector3 lookDir = desiredLookAt - _smoothedCamPos;
+            if (lookDir.sqrMagnitude < 0.001f) lookDir = Vector3.forward;
+            Quaternion targetRot = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
+            _smoothedRot = Quaternion.Slerp(_smoothedRot, targetRot, 1f - Mathf.Exp(-rotLerpSpeed * dt));
+
+            _currentFov = Mathf.Lerp(_currentFov, desiredFov, 1f - Mathf.Exp(-8.5f * dt));
+            if (_cam != null)
+                _cam.fieldOfView = _currentFov;
+
+            Vector3 shakeOffset = Vector3.zero;
+            if (_impactShakeTimer > 0f)
+            {
+                _impactShakeTimer -= dt;
+                float decay = Mathf.Clamp01(_impactShakeTimer / _impactShakeDuration);
+                decay *= decay;
+                shakeOffset = Random.insideUnitSphere * (_impactShakeMagnitude * 0.25f * decay);
+            }
+
+            transform.position = _smoothedCamPos + shakeOffset;
+            transform.rotation = _smoothedRot;
+            ApplyOmniDirectionalCullingMatrix();
+        }
+
         private void ApplyOmniDirectionalCullingMatrix()
         {
             if (_cam == null) return;

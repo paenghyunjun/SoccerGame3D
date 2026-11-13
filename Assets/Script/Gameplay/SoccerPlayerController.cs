@@ -119,6 +119,10 @@ namespace Soccer3D.Gameplay
         private float _wallJumpTimer;
         private float _wallBlockWindowTimer;
         private bool _controlsEnabled;
+        private float _eHoldTime;
+        private bool _wasEPressedInPossession;
+        private bool _qUsedAsModifier;
+        private bool _finesseShotRequested;
 
         // AI 내부 타이머 및 크로스 침투 / 탈압박 드리블 상태
         private float _aiDecisionTimer;
@@ -134,6 +138,8 @@ namespace Soccer3D.Gameplay
         private float _incomingPassAssistTimer;
         private SoccerPlayerController _incomingPassSender;
         private bool _autoSwitchToMeOnTouch;
+        private float _qInfiltrateRunTimer;
+        private Vector3 _qInfiltrateTarget;
 
         public bool IsPerformingEvasiveDribble => _aiEvasiveDribbleTimer > 0f;
 
@@ -363,6 +369,7 @@ namespace Soccer3D.Gameplay
             _incomingPassAssistTimer = 0f;
             _incomingPassSender = null;
             _autoSwitchToMeOnTouch = false;
+            _qInfiltrateRunTimer = 0f;
             LastIntendedReceiver = null;
             IsSprintingNow = false;
             IsHeadering = false;
@@ -403,6 +410,27 @@ namespace Soccer3D.Gameplay
 
         public Vector3 GetFirstPersonAimDirection()
         {
+            if (DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast && !isAI)
+            {
+                Vector2 mi = ReadMoveInput();
+                if (mi.sqrMagnitude > 0.04f)
+                    return new Vector3(mi.x, 0f, mi.y).normalized;
+
+                Camera cam = Camera.main;
+                if (cam != null && Mouse.current != null && Cursor.lockState != CursorLockMode.Locked)
+                {
+                    Ray ray = cam.ScreenPointToRay(Mouse.current.position.ReadValue());
+                    Plane ground = new Plane(Vector3.up, Vector3.zero);
+                    if (ground.Raycast(ray, out float enter) && enter > 0.1f)
+                    {
+                        Vector3 toHit = ray.GetPoint(enter) - transform.position;
+                        toHit.y = 0f;
+                        if (toHit.sqrMagnitude > 0.36f)
+                            return toHit.normalized;
+                    }
+                }
+                return transform.forward;
+            }
             return GetFirstPersonLookRotation() * Vector3.forward;
         }
 
@@ -419,7 +447,11 @@ namespace Soccer3D.Gameplay
         {
             _planarVelocity = Vector3.zero;
             if (visualRig != null)
-                visualRig.TriggerCelebration(3.0f);
+            {
+                var styles = (PlayerVisualRig.CelebrationStyle[])System.Enum.GetValues(typeof(PlayerVisualRig.CelebrationStyle));
+                var chosen = styles[UnityEngine.Random.Range(0, styles.Length)];
+                visualRig.TriggerCelebration(3.0f, chosen);
+            }
         }
 
         public void PlayFoulFall(Vector3 pushVel)
@@ -435,11 +467,11 @@ namespace Soccer3D.Gameplay
             _jumpHeightOffset = 0f;
             _jumpVerticalVel = 0f;
             _planarVelocity = new Vector3(pushVel.x, 0f, pushVel.z) * 0.45f;
-            _stunTimer = 1.35f;
+            _stunTimer = 1.45f;
             if (visualRig != null)
             {
                 visualRig.SetJumpHeightOffset(0f);
-                visualRig.TriggerFoulFall(1.30f);
+                visualRig.TriggerFoulFall(1.42f);
             }
         }
 
@@ -515,6 +547,8 @@ namespace Soccer3D.Gameplay
             _circularSpinMomentum = 0f;
             _blitzDashTimer = 0f;
             _dragDuration = 0f;
+            if (visualRig != null)
+                visualRig.TriggerStumble(Mathf.Clamp(stunDuration, 0.32f, 0.52f));
         }
 
         /// <summary>
@@ -570,6 +604,7 @@ namespace Soccer3D.Gameplay
                     _autoSwitchToMeOnTouch = false;
                 }
             }
+            if (_qInfiltrateRunTimer > 0f) _qInfiltrateRunTimer -= dt;
             if (_wallJumpTimer > 0f) _wallJumpTimer -= dt;
             if (_wallBlockWindowTimer > 0f)
             {
@@ -581,6 +616,8 @@ namespace Soccer3D.Gameplay
             RefreshNearestOpponent();
             UpdateAimTarget();
             UpdateGroundBallArrowVisual();
+            if (!isAI && visualRig != null)
+                visualRig.UpdateControlDirectionArrow(ReadMoveInput(), transform.forward);
 
             if (!_controlsEnabled)
             {
@@ -604,10 +641,10 @@ namespace Soccer3D.Gameplay
             // 실시간 오버헤드킥 / 아크로바틱 가능 자세 체크 (1인칭 플레이어는 마우스 에임이 공에 가 있을 때만 발동!)
             Vector3 goalCenter = new Vector3(attackingGoalSign * ShotCalculator.PitchHalfLength, 0f, 0f);
             bool holdingAcroMod = !isAI && (_jumpHeightOffset > 0.25f || ReadHoldAcrobaticPosture());
-            IsAimingAtBall = CheckMouseAimOnBall();
+            IsAimingAtBall = true;
             bool inRangeAny = ShotCalculator.CheckAcrobaticOpportunity(this, ball, goalCenter, holdingAcroMod, out ShotType acroType, requireMouseAimOnBall: false);
-            CanDoAcrobaticNow = inRangeAny && (isAI || IsAimingAtBall);
-            IsBallInAcrobaticRangeWithoutAim = !isAI && inRangeAny && !IsAimingAtBall;
+            CanDoAcrobaticNow = inRangeAny;
+            IsBallInAcrobaticRangeWithoutAim = false;
             AvailableAcrobaticType = acroType;
 
             if (_stunTimer > 0f)
@@ -728,16 +765,17 @@ namespace Soccer3D.Gameplay
         public bool CanDoJumpHeaderNow()
         {
             if (ball == null || ball.CurrentOwner == this) return false;
-            if (!isAI && !CheckMouseAimOnBall()) return false;
 
+            float hScale = Profile != null ? Profile.HeightScale : 1f;
+            float headY = 1.54f * hScale;
             float h = ball.HeightAboveGround;
-            if (h < 0.78f || h > 3.25f) return false;
+            if (Mathf.Abs(h - headY) > 0.52f) return false;
 
             float planarDist = Vector2.Distance(
                 new Vector2(transform.position.x, transform.position.z),
                 new Vector2(ball.transform.position.x, ball.transform.position.z));
 
-            return planarDist <= 2.35f && (_jumpHeightOffset > 0.12f || h <= 2.25f);
+            return planarDist <= 1.80f;
         }
 
         public void ExecuteHeaderShot()
@@ -750,7 +788,6 @@ namespace Soccer3D.Gameplay
             _incomingCrossTimer = 0f;
             IsHeadering = true;
 
-            TriggerManualJump();
             if (visualRig != null)
                 visualRig.TriggerHeader(0.56f);
 
@@ -842,10 +879,11 @@ namespace Soccer3D.Gameplay
             }
 
             float baseTop = Profile != null ? Profile.EffectiveTopSpeed : 8.0f;
+            _jumpHeightOffset = 0f;
+            _jumpVerticalVel = 0f;
             _blitzDashDir = dir;
-            _blitzDashTimer = 0.25f;
-            // 너무 비현실적으로 빠르지 않도록 기본 전력질주 속도의 약 1.45배(11.2 ~ 14.0 m/s) 수준으로 자연스럽게 조정!
-            _blitzDashSpeed = Mathf.Clamp(baseTop * 1.45f, 11.2f, 14.0f);
+            _blitzDashTimer = 0.30f;
+            _blitzDashSpeed = Mathf.Clamp(baseTop * 1.62f, 12.8f, 15.6f);
 
             if (!isAI)
             {
@@ -855,7 +893,10 @@ namespace Soccer3D.Gameplay
             }
 
             if (visualRig != null)
-                visualRig.TriggerBlitzDash(0.25f);
+            {
+                visualRig.SetJumpHeightOffset(0f);
+                visualRig.TriggerBlitzDash(0.30f);
+            }
 
             if (DynamicSoccerCamera.Instance != null)
                 DynamicSoccerCamera.Instance.TriggerBlitzDashFov(0.24f);
@@ -891,7 +932,7 @@ namespace Soccer3D.Gameplay
             }
 
             float baseTop = Profile != null ? Profile.EffectiveTopSpeed : 8.0f;
-            float dashProgress = Mathf.Clamp01(_blitzDashTimer / 0.25f);
+            float dashProgress = Mathf.Clamp01(_blitzDashTimer / 0.30f);
             float currentDashSpeed = Mathf.Lerp(baseTop * 0.92f, _blitzDashSpeed, dashProgress);
 
             _planarVelocity = _blitzDashDir * currentDashSpeed;
@@ -1122,19 +1163,28 @@ namespace Soccer3D.Gameplay
             Vector2 moveInput = ReadMoveInput();
             bool sprinting = ReadSprint(); // SHIFT 키 = 달리기(질주)
 
-            bool shootPressed = ReadShootPressedThisFrame(); // 마우스 좌클릭 = 슛!
+            bool shootPressed = ReadShootPressedThisFrame();
             bool shootHeld = ReadShootHeld();
             bool shootReleased = ReadShootReleasedThisFrame();
 
-            bool passRightClickPressed = ReadPassPressedThisFrame(); // 마우스 우클릭 = 패스! (Q+우클릭 시 크로스)
-            bool tackleRPressed = ReadTackleRPressedThisFrame(); // R키 = 태클! (Shift+R 시 슬라이딩 태클)
-            bool flickQPressed = ReadFlickQPressedThisFrame(); // 볼 소유 시 Q키 = 볼 띄우기
-            bool knockEPressed = ReadKnockOnBurstPressedThisFrame(); // E키 = 치고 달리기
-            bool spacePressed = ReadJumpOrDashSpacePressedThisFrame(); // Space 단타 = 점프 / 2연타 = 순간 돌진 탈취!
+            bool passPressed = ReadPassPressedThisFrame();
+            bool throughWPressed = ReadThroughPassWPressedThisFrame();
+            bool lobAPressed = ReadLobAPressedThisFrame();
+            bool tackleRPressed = ReadTackleRPressedThisFrame();
+            Keyboard kbCur = Keyboard.current;
+            bool qHeld = kbCur != null && kbCur.qKey.isPressed;
+            if (kbCur != null && kbCur.qKey.wasPressedThisFrame)
+                _qUsedAsModifier = false;
+            bool flickQReleasedUnused = kbCur != null && kbCur.qKey.wasReleasedThisFrame && !_qUsedAsModifier;
+            bool knockShiftHeld = ReadKnockOnBurstHeld();            bool spacePressed = ReadJumpOrDashSpacePressedThisFrame(); // Space 단타 = 점프 / 2연타 = 순간 돌진 탈취!
             bool shoulderBargePressed = ReadShoulderBargePressedThisFrame(); // F키 = 어깨 몸싸움 볼 탈취!
 
             // 1. 1인칭 시점 회전(마우스 360도 프리룩 / 드래그 감아차기 중 시점 고정) + WASD 체감 이동!
-            ApplyFirstPersonMovementAndLook(moveInput, sprinting, dt);
+            bool isBroadcastView = DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast;
+            if (isBroadcastView)
+                ApplyThirdPersonBroadcastMovement(moveInput, sprinting, dt);
+            else
+                ApplyFirstPersonMovementAndLook(moveInput, sprinting, dt);
 
             bool hasBall = ball != null && ball.CurrentOwner == this;
             float groundDistToBall = ball != null
@@ -1143,37 +1193,14 @@ namespace Soccer3D.Gameplay
             bool nearPlayableGroundBall = ball != null && ball.CurrentOwner == null && !ball.IsAirborne && groundDistToBall <= 2.05f;
 
             // 2. Space바: 일반 Space = 점프! / 빠르게 Space 두 번(Space×2) = 순식간에 돌진해서 공 뺏기!!
-            if (spacePressed)
+            bool offBallOrDefense = !hasBall && !nearPlayableGroundBall && !CanDoAcrobaticNow && !CanDoJumpHeaderNow();
+            if (offBallOrDefense && _tackleCooldown <= 0f && (spacePressed || shootPressed || lobAPressed || tackleRPressed))
             {
-                if (_spaceDoubleTapWindow > 0f && !hasBall)
-                {
-                    _spaceDoubleTapWindow = 0f;
-                    if (_dashStealCooldown <= 0f)
-                    {
-                        StartBlitzDashSteal();
-                        return;
-                    }
-                    else
-                    {
-                        OnShotFeedback?.Invoke($"⏳ 순간 돌진 쿨타임 ({_dashStealCooldown:F1}초) — [R] 태클이나 [F] 어깨 몸싸움도 가능!", false);
-                    }
-                }
-                else
-                {
-                    _spaceDoubleTapWindow = 0.34f;
-                    TriggerManualJump();
-                }
-            }
-
-            // 2-B. R키: 전용 태클 키! (Shift 질주 중이면 슬라이딩 태클, 일반 상태면 스탠딩 태클)
-            if (tackleRPressed && !hasBall && _tackleCooldown <= 0f)
-            {
+                bool useSlide = lobAPressed || ((spacePressed || tackleRPressed) && sprinting);
                 SoccerPlayerController targetOpp = (CurrentAimTargetType == AimTargetType.Opponent && CurrentAimTargetPlayer != null)
                     ? CurrentAimTargetPlayer
                     : opponent;
-                PerformTackle(isSlide: sprinting, explicitTarget: targetOpp);
-                string oppName = targetOpp != null && targetOpp.Profile != null ? targetOpp.Profile.playerName : "상대 선수";
-                OnShotFeedback?.Invoke(sprinting ? $"⚡ [Shift + R] {oppName} 슬라이딩 태클!!" : $"💥 [R] {oppName} 스탠딩 태클!", false);
+                PerformTackle(isSlide: useSlide, explicitTarget: targetOpp);
                 return;
             }
 
@@ -1184,59 +1211,90 @@ namespace Soccer3D.Gameplay
                 return;
             }
 
-            // 4. Q키 (볼 소유 중, 우클릭 미입력 시): 셀프 볼 띄우기 -> 공중 오버헤드킥 즉시 셋업!
-            if (flickQPressed && !passRightClickPressed && _flickCooldown <= 0f && (hasBall || nearPlayableGroundBall))
+            // 4. Q키 (단타): 볼 띄우기 없이 전방 동료 침투(Infiltrate Run)만 지시! (Q+W 조합 시 로빙 스루패스 유지)
+            if (flickQReleasedUnused && !passPressed && !throughWPressed && !lobAPressed && _flickCooldown <= 0f && (hasBall || nearPlayableGroundBall))
             {
-                _flickCooldown = 0.55f;
-                _isChargingShot = false;
-                _isDraggingCurveShot = false;
-
-                Vector3 popVel = transform.forward * 1.65f + Vector3.up * 7.25f;
-                ball.PopUpForAcrobatic(this, popVel);
-                FirstPersonEulerPitch = -22f;
-
-                OnShotFeedback?.Invoke("✨ 볼 띄우기 성공! 공중의 공을 보며 [마우스 좌클릭]으로 오버헤드킥을 쏘세요!", false);
-                return;
+                _flickCooldown = 0.40f;
+                TriggerTeammateInfiltrationRun(moveInput);
             }
-
-            // 5. E키: 1인칭 전방 치고 달리기(스루 터치)
-            if (knockEPressed && (hasBall || nearPlayableGroundBall) && _flickCooldown <= 0f)
+            if (knockShiftHeld && (hasBall || nearPlayableGroundBall) && _flickCooldown <= 0f)
             {
-                _flickCooldown = 0.45f;
-                Vector3 burstDir = (Mathf.Abs(moveInput.y) > 0.1f || Mathf.Abs(moveInput.x) > 0.1f)
-                    ? (transform.forward * Mathf.Max(0.25f, moveInput.y) + transform.right * (moveInput.x * 0.45f)).normalized
-                    : transform.forward;
-                if (burstDir.sqrMagnitude < 0.01f) burstDir = transform.forward;
-
-                ball.ReleaseFromOwner(this, 0.16f);
-                ball.Rb.linearVelocity = burstDir * (Profile.EffectiveTopSpeed * 1.28f) + Vector3.up * 0.55f;
-                _planarVelocity = burstDir * (Profile.EffectiveTopSpeed * 1.15f);
+                _wasEPressedInPossession = true;
+                _eHoldTime = Mathf.Min(_eHoldTime + dt, 0.65f);
             }
-
-            // 6. 마우스 우클릭: 기본 땅볼 패스! ([Q + 우클릭] 조합 시 페널티 박스 로빙 크로스 지원)
-            if (passRightClickPressed && _passCooldown <= 0f)
+            else if (_wasEPressedInPossession)
             {
-                bool holdQForCross = Keyboard.current != null && Keyboard.current.qKey.isPressed;
-                if (holdQForCross)
+                if ((hasBall || nearPlayableGroundBall) && _flickCooldown <= 0f)
                 {
+                    float charge01 = Mathf.Clamp01(_eHoldTime / 0.65f);
+                    _flickCooldown = 0.50f;
+                    Vector3 burstDir;
+                    if (isBroadcastView)
+                    {
+                        burstDir = moveInput.sqrMagnitude > 0.04f
+                            ? new Vector3(moveInput.x, 0f, moveInput.y).normalized
+                            : transform.forward;
+                    }
+                    else
+                    {
+                        burstDir = (Mathf.Abs(moveInput.y) > 0.1f || Mathf.Abs(moveInput.x) > 0.1f)
+                            ? (transform.forward * Mathf.Max(0.25f, moveInput.y) + transform.right * (moveInput.x * 0.45f)).normalized
+                            : transform.forward;
+                    }
+                    if (burstDir.sqrMagnitude < 0.01f) burstDir = transform.forward;
+
+                    float knockBallSpeed = Mathf.Lerp(9.8f, 15.6f, charge01);
+                    float lockoutDur = Mathf.Lerp(0.24f, 0.44f, charge01);
+                    ball.ReleaseFromOwner(this, lockoutDur);
+                    ball.Rb.linearVelocity = burstDir * knockBallSpeed + Vector3.up * Mathf.Lerp(0.35f, 0.72f, charge01);
+                    _planarVelocity = burstDir * (Profile.EffectiveTopSpeed * Mathf.Lerp(1.06f, 1.24f, charge01));
+                }
+                _eHoldTime = 0f;
+                _wasEPressedInPossession = false;
+            }
+            else
+            {
+                _eHoldTime = 0f;
+            }
+
+            if ((throughWPressed || lobAPressed || passPressed) && _passCooldown <= 0f)
+            {
+                if (qHeld && throughWPressed)
+                {
+                    _qUsedAsModifier = true;
                     if (hasBall || nearPlayableGroundBall)
                     {
-                        SoccerPlayerController crossTarget = CurrentAimTargetType == AimTargetType.Teammate ? CurrentAimTargetPlayer : null;
-                        ExecuteOpenPlayCross(crossTarget);
+                        SoccerPlayerController lobTarget = (CurrentAimTargetType == AimTargetType.Teammate && CurrentAimTargetPlayer != null)
+                            ? CurrentAimTargetPlayer
+                            : FindBestPassTarget(GetFirstPersonAimDirection(), preferForward: true);
+                        ExecuteOpenPlayCross(lobTarget, forceBoxCross: true);
                         return;
                     }
                     else if (ball != null && ball.CurrentOwner != null && ball.CurrentOwner != this &&
                              ball.CurrentOwner.attackingGoalSign == attackingGoalSign && ball.CurrentOwner.isAI)
                     {
-                        SoccerPlayerController passer = ball.CurrentOwner;
-                        passer.ExecuteOpenPlayCross(this);
-                        string passerName = passer.Profile != null ? passer.Profile.playerName : "우리 팀 동료";
-                        OnShotFeedback?.Invoke($"📢 크로스 콜! {passerName} 선수가 내 앞으로 올려줍니다! [좌클릭] 오버헤드킥 / 점프 헤딩!", false);
+                        ball.CurrentOwner.ExecuteOpenPlayCross(this, forceBoxCross: true);
                         return;
                     }
                 }
-                else
+                else if (lobAPressed)
                 {
+                    if (hasBall || nearPlayableGroundBall)
+                    {
+                        SoccerPlayerController crossTarget = CurrentAimTargetType == AimTargetType.Teammate ? CurrentAimTargetPlayer : null;
+                        ExecuteOpenPlayCross(crossTarget, forceBoxCross: true);
+                        return;
+                    }
+                    else if (ball != null && ball.CurrentOwner != null && ball.CurrentOwner != this &&
+                             ball.CurrentOwner.attackingGoalSign == attackingGoalSign && ball.CurrentOwner.isAI)
+                    {
+                        ball.CurrentOwner.ExecuteOpenPlayCross(this, forceBoxCross: true);
+                        return;
+                    }
+                }
+                else if (throughWPressed || passPressed)
+                {
+                    bool throughPass = throughWPressed || sprinting;
                     if (hasBall || nearPlayableGroundBall)
                     {
                         SoccerPlayerController passTarget = (CurrentAimTargetType == AimTargetType.Teammate && CurrentAimTargetPlayer != null)
@@ -1244,28 +1302,19 @@ namespace Soccer3D.Gameplay
                             : FindBestPassTarget(GetFirstPersonAimDirection(), preferForward: true);
                         if (passTarget != null)
                         {
-                            string receiverName = passTarget.Profile != null ? passTarget.Profile.playerName : "동료";
-                            ExecuteGroundPass(passTarget, isThroughPass: sprinting);
-                            OnShotFeedback?.Invoke($"🎯 [우클릭 패스] {receiverName} 선수에게 패스! (볼이 발에 닿는 순간 자동 전환)", false);
+                            ExecuteGroundPass(passTarget, isThroughPass: throughPass);
                             return;
                         }
                     }
                     else if (ball != null && ball.CurrentOwner != null && ball.CurrentOwner != this &&
                              ball.CurrentOwner.attackingGoalSign == attackingGoalSign && ball.CurrentOwner.isAI)
                     {
-                        SoccerPlayerController passer = ball.CurrentOwner;
-                        passer.ExecuteGroundPass(this, isThroughPass: sprinting);
-                        string passerName = passer.Profile != null ? passer.Profile.playerName : "우리 팀 동료";
-                        OnShotFeedback?.Invoke($"📢 [우클릭 패스 콜] {passerName} 선수가 내게 패스를 연결합니다!", false);
+                        ball.CurrentOwner.ExecuteGroundPass(this, isThroughPass: throughPass);
                         return;
                     }
                 }
             }
 
-            // 7. 마우스 좌클릭 액션:
-            // - 팀에 대고 좌클릭: 패스 지원
-            // - 공중볼 찬스: 오버헤드킥 / 시저스 발리 / 점프 헤딩슛!
-            // - 그 외 좌클릭: 슛! (빠르게 원하는 방향으로 드래그 후 드롭 시 포켓몬고 감아차기!)
             if (shootPressed)
             {
                 // [A] 팀에 대고 좌클 누르면 패스!
@@ -1289,6 +1338,13 @@ namespace Soccer3D.Gameplay
                 }
 
                 // [B] 공중볼 찬스: 마우스 에임이 공에 가 있을 때만 오버헤드킥 / 시저스 발리 / 점프 헤딩 발동!
+                bool wantAcroMod = ReadHoldAcrobaticPosture();
+                if (!wantAcroMod && CanDoJumpHeaderNow())
+                {
+                    ExecuteHeaderShot();
+                    return;
+                }
+
                 if (CanDoAcrobaticNow)
                 {
                     _isChargingShot = false;
@@ -1304,18 +1360,11 @@ namespace Soccer3D.Gameplay
                     return;
                 }
 
-                // 공중볼이 아크로바틱 반경 안에 떠 있는데 마우스 에임이 공에 안 들어가 있을 때는 아크로바틱/다른 동작이 발동되지 않게 차단!
-                if (IsBallInAcrobaticRangeWithoutAim)
-                {
-                    OnShotFeedback?.Invoke("🎯 마우스 에임(+)을 공중의 공에 맞춘 뒤 [좌클릭]해야 아크로바틱 슛이 나갑니다!", false);
-                    return;
-                }
-
-                // [C] 좌클릭 슈팅 차징 시작! (볼 소유 또는 루즈볼 타격 가능 거리)
                 if (hasBall || nearPlayableGroundBall)
                 {
                     _isChargingShot = true;
                     _shotCharge01 = 0.14f;
+                    _finesseShotRequested = ReadHoldZ();
                     BeginExternalCurveDragTracking();
                 }
             }
@@ -1334,45 +1383,82 @@ namespace Soccer3D.Gameplay
                     return;
                 }
 
+                if (ReadHoldZ())
+                    _finesseShotRequested = true;
+
                 if (shootHeld)
                 {
                     _shotCharge01 = Mathf.Clamp01(_shotCharge01 + dt / 0.56f);
                     if (_shotCharge01 >= 1.0f)
                     {
                         float curveBias = EndExternalCurveDragTracking();
-                        if (Mathf.Abs(curveBias) >= 0.70f)
-                            FireDragCurveShot(moveInput, curveBias);
+                        bool isBroadcast = DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast;
+                        float dragBias = (isBroadcast || _finesseShotRequested) ? 0f : curveBias;
+                        if (_finesseShotRequested || Mathf.Abs(dragBias) >= 0.70f)
+                        {
+                            FireDragCurveShot(moveInput, Mathf.Abs(dragBias) >= 0.70f ? dragBias : 0f);
+                        }
                         else
+                        {
                             FireGroundShot(moveInput);
+                        }
+                        _finesseShotRequested = false;
                         return;
                     }
                 }
 
-                // 드롭(마우스 좌클릭 릴리즈) 순간 감아차기 / 일반 파워 슛 발사!
                 if (shootReleased && _isChargingShot)
                 {
                     float curveBias = EndExternalCurveDragTracking();
-                    if (Mathf.Abs(curveBias) >= 0.70f)
+                    bool isBroadcast = DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast;
+                    float dragBias = (isBroadcast || _finesseShotRequested) ? 0f : curveBias;
+                    if (_finesseShotRequested || Mathf.Abs(dragBias) >= 0.70f)
                     {
-                        // 빠르게 스와이프 후 즉시 드롭해도 포켓몬고 커브볼처럼 충분한 슈팅 파워가 실리도록 보정!
-                        _shotCharge01 = Mathf.Max(_shotCharge01, Mathf.Clamp(Mathf.Abs(curveBias) * 0.58f, 0.62f, 0.88f));
-                        FireDragCurveShot(moveInput, curveBias);
+                        _shotCharge01 = Mathf.Max(_shotCharge01, _finesseShotRequested ? 0.58f : Mathf.Clamp(Mathf.Abs(dragBias) * 0.58f, 0.62f, 0.88f));
+                        FireDragCurveShot(moveInput, Mathf.Abs(dragBias) >= 0.70f ? dragBias : 0f);
                     }
                     else
                     {
                         _shotCharge01 = Mathf.Max(_shotCharge01, 0.42f);
                         FireGroundShot(moveInput);
                     }
+                    _finesseShotRequested = false;
                 }
             }
         }
+        private void ApplyThirdPersonBroadcastMovement(Vector2 moveInput, bool sprinting, float dt)
+        {
+            Vector3 wishDir = new Vector3(moveInput.x, 0f, moveInput.y);
+            if (wishDir.sqrMagnitude > 1f) wishDir.Normalize();
 
-        /// <summary>
-        /// 1인칭 전용 시점 회전 + WASD 이동 물리:
-        /// - 마우스 이동: 자유로운 360도 1인칭 시야 회전 (단, 포켓몬고 감아차기 드래그 중에는 조준점 안정 고정!)
-        /// - W/A/S/D: 시선 방향 기준 전후진 및 좌우 스트레이프 이동
-        /// - Shift: 질주(달리기) / R키: 공 방향 즉시 바라보기!
-        /// </summary>
+            if (wishDir.sqrMagnitude > 0.02f)
+            {
+                float targetYaw = Quaternion.LookRotation(wishDir, Vector3.up).eulerAngles.y;
+                FirstPersonYaw = Mathf.LerpAngle(FirstPersonYaw, targetYaw, 1f - Mathf.Exp(-14f * dt));
+            }
+            transform.rotation = Quaternion.Euler(0f, FirstPersonYaw, 0f);
+            FirstPersonEulerPitch = 6f;
+
+            float topSpeed = Profile != null ? Profile.EffectiveTopSpeed : 8.0f;
+            bool activeSprint = sprinting && wishDir.sqrMagnitude > 0.04f;
+            IsSprintingNow = activeSprint;
+
+            float speedMult = activeSprint ? 1.0f : 0.76f;
+            if (ball != null && ball.CurrentOwner == this) speedMult *= 0.93f;
+
+            Vector3 targetVel = wishDir * (topSpeed * speedMult);
+            float accel = Profile != null ? Profile.EffectiveAcceleration : 20f;
+            float decel = accel * 1.18f;
+
+            float rate = wishDir.sqrMagnitude > 0.02f ? accel : decel;
+            _planarVelocity = Vector3.MoveTowards(_planarVelocity, targetVel, rate * dt);
+
+            MovePlanarWithBounds(_planarVelocity * dt);
+
+            if (visualRig != null)
+                visualRig.UpdateProceduralAnimation(_planarVelocity, activeSprint, dt);
+        }
+
         private void ApplyFirstPersonMovementAndLook(Vector2 moveInput, bool sprinting, float dt)
         {
             // 1. 마우스 델타 & 우측 스틱 1인칭 프리룩 (감아차기 드래그 중에는 카메라가 돌아가지 않도록 고정!)
@@ -1608,8 +1694,13 @@ namespace Soccer3D.Gameplay
             if (GoalCelebrationManager.Instance != null)
                 GoalCelebrationManager.Instance.TriggerBriefImpactBloom(1.10f);
 
-            string dirStr = curveBias > 0f ? "우측 감아차기 궤적" : "좌측 감아차기 궤적";
-            string toast = $"🌀 [포켓몬고 드래그 감아차기] {dirStr}! {result.feedbackSummary}";
+            string footCurveLabel = result.metadata.footUsed == PreferredFoot.Right
+                ? "오른발 인사이드 감아차기 (우->좌)"
+                : "왼발 인사이드 감아차기 (좌->우)";
+            string dirStr = Mathf.Abs(curveBias) > 0.01f
+                ? (curveBias > 0f ? "우측 감아차기 궤적" : "좌측 감아차기 궤적")
+                : footCurveLabel;
+            string toast = $"🌀 [감아차기] {dirStr}! {result.feedbackSummary}";
             OnShotFeedback?.Invoke(toast, result.metadata.usedWeakFoot);
         }
 
@@ -1664,9 +1755,9 @@ namespace Soccer3D.Gameplay
                 : startPlayerPos;
 
             // 카메라 줌인 + 화면 떨림 시작! (1인칭 도약 줌인 + 텐션 진동!)
-            if (DynamicSoccerCamera.Instance != null)
+            if (!isAI && DynamicSoccerCamera.Instance != null)
             {
-                DynamicSoccerCamera.Instance.BeginAcrobaticWindupZoom(transform, isAI ? 0.08f : 0.065f);
+                DynamicSoccerCamera.Instance.BeginAcrobaticWindupZoom(transform, 0.065f);
             }
 
             if (visualRig != null)
@@ -1678,7 +1769,7 @@ namespace Soccer3D.Gameplay
             }
 
             // 슬로모션 자세 잡기 구간 (실제 시간 약 0.34초 동안 극적인 공중 도약!)
-            Time.timeScale = 0.32f;
+            Time.timeScale = !isAI ? 0.32f : 1.0f;
             Time.fixedDeltaTime = 0.02f * Time.timeScale;
 
             ball.Rb.linearVelocity = Vector3.zero;
@@ -1704,7 +1795,7 @@ namespace Soccer3D.Gameplay
             }
 
             // === 발이 공에 닿는 정점 임팩트 프레임!! ===
-            Time.timeScale = 0.05f; // 짜릿한 0.045초 히트스톱!
+            Time.timeScale = !isAI ? 0.05f : 1.0f; // 짜릿한 0.045초 히트스톱!
             if (DynamicSoccerCamera.Instance != null)
             {
                 DynamicSoccerCamera.Instance.EndAcrobaticWindupZoom();
@@ -1800,9 +1891,9 @@ namespace Soccer3D.Gameplay
                     }
 
                     // 타겟과의 거리가 1.6~4.8m 사이일 때 자연스러운 반보 스텝만 보정 (순간이동 느낌 방지!)
-                    if (!isAI && toTarget.magnitude > 1.35f && toTarget.magnitude <= 4.8f)
+                    if (toTarget.magnitude > 1.25f && toTarget.magnitude <= 4.8f)
                     {
-                        float closeStep = Mathf.Min(toTarget.magnitude - 1.15f, isSlide ? 0.90f : 0.62f);
+                        float closeStep = Mathf.Min(toTarget.magnitude - 1.05f, isSlide ? 0.92f : 0.66f);
                         MovePlanarWithBounds(lungeDir * closeStep);
                     }
                 }
@@ -1919,7 +2010,7 @@ namespace Soccer3D.Gameplay
                     float myDefPower = Profile != null ? (Profile.defense * 0.65f + Profile.physical * 0.35f) : 75f;
                     float oppDribbleHold = prevOwner.Profile != null ? (prevOwner.Profile.agility * 0.55f + prevOwner.Profile.physical * 0.45f) : 75f;
                     float evasiveBonus = prevOwner.IsPerformingEvasiveDribble ? 0.26f : 0f;
-                    float winProb = Mathf.Clamp(0.56f + (myDefPower - oppDribbleHold) * 0.0085f - evasiveBonus, 0.24f, 0.90f);
+                    float winProb = Mathf.Clamp(0.68f + (myDefPower - oppDribbleHold) * 0.0085f - evasiveBonus, 0.34f, 0.94f);
 
                     if (UnityEngine.Random.value <= winProb)
                     {
@@ -1964,7 +2055,7 @@ namespace Soccer3D.Gameplay
                 if (!isAI)
                     OnShotFeedback?.Invoke("🧱 수비벽 점프 블로킹 성공!! 세컨볼 찬스!", false);
                 else if (opponent != null)
-                    opponent.OnShotFeedback?.Invoke("🧱 프리킥이 수비벽에 맞고 튀어 올랐습니다! 공중에서 [좌클릭] 오버헤드킥 찬스!!", false);
+                    opponent.OnShotFeedback?.Invoke("🧱 프리킥이 수비벽에 맞고 튀어 올랐습니다! 공중에서 [D] 오버헤드킥 찬스!!", false);
             }
         }
 
@@ -1980,13 +2071,17 @@ namespace Soccer3D.Gameplay
                     ? Mathf.Lerp(0.78f, 0.58f, agilityNorm)
                     : Mathf.Lerp(1.16f, 0.96f, agilityNorm);
 
-                // 주발 쪽 발 앞에 살짝 얹어 드리블 디테일 구현 (라인 근처 드리블 시에도 공이 라인 밖으로 밀려나지 않도록 클램프!)
+                // 주발 쪽 발 앞에 살짝 얹어 드리블 디테일 구현 (골대 안쪽은 골라인을 넘어 그대로 끌고 들어가 득점 가능, 일반 아웃라인은 이탈 방지)
                 float footOffsetSide = (Profile == null || Profile.preferredFoot == PreferredFoot.Right) ? 0.14f : -0.14f;
                 Vector3 targetBallPos = transform.position
                                       + transform.forward * leadDist
                                       + transform.right * footOffsetSide
                                       + Vector3.up * SoccerBall.BallRadius;
-                targetBallPos.x = Mathf.Clamp(targetBallPos.x, -ShotCalculator.PitchHalfLength + SoccerBall.BallRadius, ShotCalculator.PitchHalfLength - SoccerBall.BallRadius);
+                bool inGoalMouthZ = Mathf.Abs(targetBallPos.z) < (ShotCalculator.GoalHalfWidth - 0.16f);
+                float maxBallX = inGoalMouthZ
+                    ? (ShotCalculator.PitchHalfLength + 2.05f)
+                    : (ShotCalculator.PitchHalfLength - SoccerBall.BallRadius);
+                targetBallPos.x = Mathf.Clamp(targetBallPos.x, -maxBallX, maxBallX);
                 targetBallPos.z = Mathf.Clamp(targetBallPos.z, -ShotCalculator.PitchHalfWidth + SoccerBall.BallRadius, ShotCalculator.PitchHalfWidth - SoccerBall.BallRadius);
 
                 ball.transform.position = Vector3.Lerp(ball.transform.position, targetBallPos, 1f - Mathf.Exp(-24f * dt));
@@ -2022,11 +2117,11 @@ namespace Soccer3D.Gameplay
                 }
             }
 
-            // 루즈볼 / 낙하볼 소유권 획득 체크 (공이 트래핑할 수 있는 위치에 떨어지면 자동으로 트래핑 모션 발동!)
+            // 루즈볼 / 낙하볼 / 공중볼 신체 접촉 트래핑 체크 (공이 뜬 상태로 몸에 닿으면 트래핑 모션과 함께 소유권 획득!)
             if (ball.CurrentOwner == null && ball.CanBeClaimedBy(this))
             {
                 float speed = ball.Rb.linearVelocity.magnitude;
-                float maxTrapSpeed = ball.IsSuperShotActive ? 14.0f : (_incomingPassAssistTimer > 0f ? 32.0f : 25.0f);
+                float maxTrapSpeed = ball.IsSuperShotActive ? 16.5f : (_incomingPassAssistTimer > 0f ? 33.0f : 27.5f);
                 if (speed < maxTrapSpeed)
                 {
                     float dist = Vector2.Distance(
@@ -2036,14 +2131,20 @@ namespace Soccer3D.Gameplay
                         ? 1.72f
                         : (isAI ? 0.98f : 1.28f);
 
-                    // 바닥 근처 볼(<=0.48m) 또는 떨어지는 낙하 공(<=1.40m, vy <= 1.2m/s)인 경우 자동 트래핑
-                    bool canTrapGround = ball.HeightAboveGround <= 0.52f && dist <= claimRadius;
-                    bool canTrapDropping = ball.HeightAboveGround <= 1.40f && ball.Rb.linearVelocity.y <= 1.2f && dist <= (claimRadius + 0.18f);
+                    float h = ball.HeightAboveGround;
+                    float bodyTopHeight = (Profile != null ? Profile.HeightScale : 1.0f) * 1.92f;
+                    float bodyTouchRadius = isAI ? 0.88f : 1.02f;
 
-                    if (canTrapGround || canTrapDropping)
+                    bool canTrapGround = h <= 0.52f && dist <= claimRadius;
+                    bool canTrapDropping = h <= 1.52f && ball.Rb.linearVelocity.y <= 2.2f && dist <= (claimRadius + 0.18f);
+                    bool canTrapAirborneBody = !IsHeadering && !_isChargingShot && _stunTimer <= 0f &&
+                        h > 0.45f && h <= bodyTopHeight && dist <= bodyTouchRadius;
+
+                    if (canTrapGround || canTrapDropping || canTrapAirborneBody)
                     {
+                        float trappedHeight = h;
                         SoccerPlayerController prevLastTouch = ball.LastTouchPlayer;
-                        bool wasDroppingOrFast = ball.HeightAboveGround > 0.22f || speed > 2.8f;
+                        bool wasDroppingOrFast = trappedHeight > 0.22f || speed > 2.8f;
                         bool shouldSwitchOnTouch = isAI && (
                             _autoSwitchToMeOnTouch ||
                             (prevLastTouch != null && !prevLastTouch.isAI && prevLastTouch != this && prevLastTouch.attackingGoalSign == attackingGoalSign));
@@ -2054,30 +2155,34 @@ namespace Soccer3D.Gameplay
                         ball.SetOwner(this);
                         _aiBallHoldTimer = 0f;
 
-                        // 공을 발 앞 0.72m 위치로 안정적으로 부드럽게 쿠셔닝 안착 (라인 밖으로 넘어가지 않게 클램프)
+                        // 공을 발 앞 0.72m 위치로 안정적으로 부드럽게 쿠셔닝 안착 (공중볼은 몸에서 발밑으로 부드럽게 낙하)
                         Vector3 trapSpot = transform.position + transform.forward * 0.72f + Vector3.up * SoccerBall.BallRadius;
                         trapSpot.x = Mathf.Clamp(trapSpot.x, -ShotCalculator.PitchHalfLength + SoccerBall.BallRadius, ShotCalculator.PitchHalfLength - SoccerBall.BallRadius);
                         trapSpot.z = Mathf.Clamp(trapSpot.z, -ShotCalculator.PitchHalfWidth + SoccerBall.BallRadius, ShotCalculator.PitchHalfWidth - SoccerBall.BallRadius);
-                        ball.transform.position = Vector3.Lerp(ball.transform.position, trapSpot, 0.70f);
+                        ball.transform.position = Vector3.Lerp(ball.transform.position, trapSpot, trappedHeight >= 0.48f ? 0.42f : 0.70f);
                         ball.Rb.linearVelocity = Vector3.zero;
                         ball.Rb.angularVelocity = Vector3.zero;
 
                         PreferredFoot foot = Profile != null ? Profile.preferredFoot : PreferredFoot.Right;
                         if (visualRig != null)
                         {
-                            visualRig.TriggerTrapping(foot, 0.40f);
+                            float trapDur = trappedHeight >= 0.48f ? 0.46f : 0.38f;
+                            visualRig.TriggerTrapping(foot, trapDur, trappedHeight);
                         }
 
-                        // 공이 패스 받는 선수의 발에 완전히 닿아 트래핑된 바로 이 순간에 조작 & 카메라 전환!
+                        // 공이 패스 받는 선수의 몸/발에 닿아 트래핑된 바로 이 순간에 조작 & 카메라 전환!
                         if (shouldSwitchOnTouch)
                         {
                             OnHumanPassExecuted?.Invoke(this);
                             string myName = Profile != null ? Profile.playerName : "동료 선수";
-                            OnShotFeedback?.Invoke($"⚽ [패스 연결 완료!] {myName} 선수가 볼을 이어받아 조작 전환!", false);
+                            OnShotFeedback?.Invoke($"⚽ [패스 연결 완료!] {myName} 선수가 볼을 트래핑해 조작 전환!", false);
                         }
                         else if (!isAI && wasDroppingOrFast)
                         {
-                            OnShotFeedback?.Invoke("⚽ 퍼스트 터치 트래핑! 안정적으로 볼 컨트롤 완료", false);
+                            string trapLabel = trappedHeight >= 0.92f
+                                ? "⚽ 가슴 트래핑! 공중볼을 안정적으로 컨트롤"
+                                : (trappedHeight >= 0.48f ? "⚽ 허벅지 트래핑! 공중볼 컨트롤 완료" : "⚽ 퍼스트 터치 트래핑! 안정적으로 볼 컨트롤 완료");
+                            OnShotFeedback?.Invoke(trapLabel, false);
                         }
                     }
                 }
@@ -2227,7 +2332,8 @@ namespace Soccer3D.Gameplay
             if (isAI || _groundBallArrowRoot == null)
                 return;
 
-            bool shouldShow = _controlsEnabled && ball != null && ball.CurrentOwner != this && !_isInAcrobaticRoutine;
+            bool isBroadcast = DynamicSoccerCamera.Instance != null && DynamicSoccerCamera.Instance.UseThirdPersonBroadcast;
+            bool shouldShow = !isBroadcast && _controlsEnabled && ball != null && ball.CurrentOwner != this && !_isInAcrobaticRoutine;
             if (_groundBallArrowRoot.gameObject.activeSelf != shouldShow)
                 _groundBallArrowRoot.gameObject.SetActive(shouldShow);
 
@@ -2310,6 +2416,59 @@ namespace Soccer3D.Gameplay
             }
 
             return best;
+        }
+
+        public void CommandInfiltrateRun(Vector3 targetSpot, float duration = 3.4f)
+        {
+            _qInfiltrateRunTimer = duration;
+            _qInfiltrateTarget = targetSpot;
+            _aiEvasiveDribbleTimer = 0f;
+        }
+
+        private void TriggerTeammateInfiltrationRun(Vector2 moveInput)
+        {
+            if (teammates == null || teammates.Count == 0) return;
+
+            Vector3 aimDir = moveInput.sqrMagnitude > 0.04f
+                ? new Vector3(moveInput.x, 0f, moveInput.y).normalized
+                : transform.forward;
+
+            SoccerPlayerController bestMate = null;
+            float bestScore = -9999f;
+
+            for (int i = 0; i < teammates.Count; i++)
+            {
+                SoccerPlayerController mate = teammates[i];
+                if (mate == null || mate == this) continue;
+
+                Vector3 diff = mate.transform.position - transform.position;
+                diff.y = 0f;
+                float dist = diff.magnitude;
+                if (dist < 2.0f || dist > 42.0f) continue;
+
+                float dirDot = Vector3.Dot(diff / dist, aimDir);
+                float forwardProgress = (mate.transform.position.x - transform.position.x) * attackingGoalSign;
+                float roleBonus = mate.tacticalRole == TacticalRole.Striker ? 1.8f : 0f;
+                float score = dirDot * 3.0f + Mathf.Clamp(forwardProgress * 0.12f, -1.5f, 3.0f) - dist * 0.05f + roleBonus;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestMate = mate;
+                }
+            }
+
+            if (bestMate == null) return;
+
+            float targetX = Mathf.Clamp(
+                Mathf.Max(bestMate.transform.position.x * attackingGoalSign + 16.0f, transform.position.x * attackingGoalSign + 14.0f),
+                -ShotCalculator.PitchHalfLength + 12f,
+                ShotCalculator.PitchHalfLength - 3.2f) * attackingGoalSign;
+            float targetZ = Mathf.Clamp(bestMate.transform.position.z * 0.85f, -ShotCalculator.PitchHalfWidth + 4.5f, ShotCalculator.PitchHalfWidth - 4.5f);
+
+            bestMate.CommandInfiltrateRun(new Vector3(targetX, 0f, targetZ), 3.4f);
+            string mateName = bestMate.Profile != null ? bestMate.Profile.playerName : "동료 선수";
+            OnShotFeedback?.Invoke($"🏃 [Q 침투!] {mateName} 선수가 전방 빈 공간으로 침투합니다!", false);
         }
 
         public void NotifyIncomingGroundPass(SoccerPlayerController sender, float assistDuration, bool autoSwitchOnTouch = false)
@@ -2743,6 +2902,17 @@ namespace Soccer3D.Gameplay
             }
             else if (myTeamHasBall)
             {
+                if (_qInfiltrateRunTimer > 0f)
+                {
+                    float runX = Mathf.Clamp(
+                        Mathf.Max(_qInfiltrateTarget.x * attackingGoalSign, ball.transform.position.x * attackingGoalSign + 14.0f),
+                        -ShotCalculator.PitchHalfLength + 12f,
+                        ShotCalculator.PitchHalfLength - 3.2f) * attackingGoalSign;
+                    Vector3 liveTarget = new Vector3(runX, 0f, _qInfiltrateTarget.z);
+                    MoveTowardsTacticalSpot(liveTarget, aiTargetGoal, sprintDistThreshold: 0.4f, speedScale: 1.0f, dt);
+                    return;
+                }
+
                 // 우리 팀이 볼을 잡았을 때 본인의 포메이션 공격 레인(ST/LS/RS/LW/RW)을 따라 전방 침투 오프더볼 움직임!
                 Vector3 runSpot = ComputeDefenderHomePosition(ball.transform.position, teamInPossession: true);
                 runSpot.z = Mathf.Clamp(runSpot.z + _aiStrafeOffsetZ * 0.45f, -ShotCalculator.PitchHalfWidth + 5f, ShotCalculator.PitchHalfWidth - 5f);
@@ -2773,9 +2943,10 @@ namespace Soccer3D.Gameplay
                     carrierToMe.y = 0f;
                     bool isBehindCarrier = carrierToMe.sqrMagnitude > 0.001f &&
                         Vector3.Dot(owner.transform.forward, carrierToMe.normalized) < -0.18f;
-                    float tackleAttemptRate = isBehindCarrier ? 0.22f : 1.15f;
+                    bool canInstantFrontTackle = !isBehindCarrier && distToCarrier < 1.45f;
+                    float tackleAttemptRate = isBehindCarrier ? 0.22f : 1.85f;
 
-                    if (distToCarrier < 2.00f && _tackleCooldown <= 0f && UnityEngine.Random.value < dt * tackleAttemptRate)
+                    if (distToCarrier < 2.15f && _tackleCooldown <= 0f && (canInstantFrontTackle || UnityEngine.Random.value < dt * tackleAttemptRate))
                     {
                         bool recklessSlide = !isBehindCarrier && distToCarrier > 1.50f && UnityEngine.Random.value < 0.14f;
                         PerformTackle(isSlide: recklessSlide);
@@ -2917,9 +3088,10 @@ namespace Soccer3D.Gameplay
                     carrierToMe.y = 0f;
                     bool isBehindCarrier = carrierToMe.sqrMagnitude > 0.001f &&
                         Vector3.Dot(owner.transform.forward, carrierToMe.normalized) < -0.18f;
-                    float tackleAttemptRate = isBehindCarrier ? 0.25f : 1.45f;
+                    bool canInstantFrontTackle = !isBehindCarrier && myDistToCarrier < 1.55f;
+                    float tackleAttemptRate = isBehindCarrier ? 0.22f : 2.10f;
 
-                    if (myDistToCarrier < 1.98f && _tackleCooldown <= 0f && UnityEngine.Random.value < dt * tackleAttemptRate)
+                    if (myDistToCarrier < 2.20f && _tackleCooldown <= 0f && (canInstantFrontTackle || UnityEngine.Random.value < dt * tackleAttemptRate))
                     {
                         // 등 뒤에서 무리한 백태클을 남발하지 않고 정면/측면 위주로 깔끔한 스탠딩 태클 구사!
                         bool slide = !isBehindCarrier && myDistToCarrier > 1.55f && UnityEngine.Random.value < 0.12f;
@@ -2933,9 +3105,20 @@ namespace Soccer3D.Gameplay
                 return;
             }
 
-            // 3. 우리 팀 동료가 공을 가지고 있을 때: 빌드업 지원 라인까지 안정적으로 전진 배치
+            // 3. 우리 팀 동료가 공을 가지고 있을 때: Q 침투 지시 우선 실행, 평상시에는 빌드업 지원 라인 유지
             if (myTeamHasBall)
             {
+                if (_qInfiltrateRunTimer > 0f)
+                {
+                    float runX = Mathf.Clamp(
+                        Mathf.Max(_qInfiltrateTarget.x * attackingGoalSign, ball.transform.position.x * attackingGoalSign + 14.0f),
+                        -ShotCalculator.PitchHalfLength + 12f,
+                        ShotCalculator.PitchHalfLength - 3.2f) * attackingGoalSign;
+                    Vector3 liveTarget = new Vector3(runX, 0f, _qInfiltrateTarget.z);
+                    MoveTowardsTacticalSpot(liveTarget, aiTargetGoal, sprintDistThreshold: 0.4f, speedScale: 1.0f, dt);
+                    return;
+                }
+
                 MoveTowardsTacticalSpot(tacticalHome, aiTargetGoal, sprintDistThreshold: 10.0f, speedScale: 0.82f, dt);
                 return;
             }
@@ -3343,10 +3526,70 @@ namespace Soccer3D.Gameplay
 
         private void MovePlanarWithBounds(Vector3 delta)
         {
-            // 공이 터치라인/골라인 끝에 걸려 있을 때도 선수가 라인 바깥 여백(최대 1.25m)까지 직접 걸어 나가 공을 잡을 수 있도록 허용!
             Vector3 p = transform.position + delta;
-            p.x = Mathf.Clamp(p.x, -ShotCalculator.PitchHalfLength - 1.25f, ShotCalculator.PitchHalfLength + 1.25f);
-            p.z = Mathf.Clamp(p.z, -ShotCalculator.PitchHalfWidth - 1.25f, ShotCalculator.PitchHalfWidth + 1.25f);
+            float goalInnerZ = ShotCalculator.GoalHalfWidth - 0.30f;
+            float maxFieldX = ShotCalculator.PitchHalfLength - 0.16f;
+            float maxFieldZ = ShotCalculator.PitchHalfWidth - 0.16f;
+            float maxGoalX = ShotCalculator.PitchHalfLength + 1.85f;
+
+            // 골대 정면 구간은 선수가 공을 몰고 골라인 안쪽 그물 앞까지 직접 들어갈 수 있도록 허용
+            if (Mathf.Abs(p.z) < goalInnerZ)
+            {
+                if (p.x > maxGoalX)
+                {
+                    p.x = maxGoalX;
+                    if (_planarVelocity.x > 0f) _planarVelocity.x = 0f;
+                }
+                else if (p.x < -maxGoalX)
+                {
+                    p.x = -maxGoalX;
+                    if (_planarVelocity.x < 0f) _planarVelocity.x = 0f;
+                }
+            }
+            else
+            {
+                // 이미 골대 내부에 있을 때는 옆 그물을 통과하지 않도록 Z축 우선 제한
+                if (Mathf.Abs(transform.position.x) > maxFieldX && Mathf.Abs(transform.position.z) < goalInnerZ)
+                {
+                    if (p.z > goalInnerZ)
+                    {
+                        p.z = goalInnerZ;
+                        if (_planarVelocity.z > 0f) _planarVelocity.z = 0f;
+                    }
+                    else if (p.z < -goalInnerZ)
+                    {
+                        p.z = -goalInnerZ;
+                        if (_planarVelocity.z < 0f) _planarVelocity.z = 0f;
+                    }
+                }
+                else
+                {
+                    // 일반 엔드라인(아웃라인): 라인 밖으로 지나치게 빠져 공과 분리되거나 제자리 달리기를 하지 않도록 경계 고정 + 바깥쪽 속도 제거
+                    if (p.x > maxFieldX)
+                    {
+                        p.x = maxFieldX;
+                        if (_planarVelocity.x > 0f) _planarVelocity.x = 0f;
+                    }
+                    else if (p.x < -maxFieldX)
+                    {
+                        p.x = -maxFieldX;
+                        if (_planarVelocity.x < 0f) _planarVelocity.x = 0f;
+                    }
+                }
+            }
+
+            // 일반 사이드 터치라인(아웃라인): 경계 접촉 시 바깥쪽 속도 성분 제거해 라인을 따라 부드럽게 미끄러지도록 처리
+            if (p.z > maxFieldZ)
+            {
+                p.z = maxFieldZ;
+                if (_planarVelocity.z > 0f) _planarVelocity.z = 0f;
+            }
+            else if (p.z < -maxFieldZ)
+            {
+                p.z = -maxFieldZ;
+                if (_planarVelocity.z < 0f) _planarVelocity.z = 0f;
+            }
+
             p.y = 0f;
             transform.position = p;
         }
@@ -3359,10 +3602,10 @@ namespace Soccer3D.Gameplay
             Keyboard kb = Keyboard.current;
             if (kb != null)
             {
-                if (kb.wKey.isPressed || kb.upArrowKey.isPressed) v.y += 1f;
-                if (kb.sKey.isPressed || kb.downArrowKey.isPressed) v.y -= 1f;
-                if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) v.x -= 1f;
-                if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) v.x += 1f;
+                if (kb.upArrowKey.isPressed) v.y += 1f;
+                if (kb.downArrowKey.isPressed) v.y -= 1f;
+                if (kb.leftArrowKey.isPressed) v.x -= 1f;
+                if (kb.rightArrowKey.isPressed) v.x += 1f;
             }
 
             Gamepad gp = Gamepad.current;
@@ -3378,7 +3621,7 @@ namespace Soccer3D.Gameplay
         public static bool ReadSprint()
         {
             Keyboard kb = Keyboard.current;
-            if (kb != null && (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed))
+            if (kb != null && kb.eKey.isPressed)
                 return true;
             Gamepad gp = Gamepad.current;
             return gp != null && gp.rightTrigger.ReadValue() > 0.35f;
@@ -3386,6 +3629,9 @@ namespace Soccer3D.Gameplay
 
         public static bool ReadCrossPressedThisFrame()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.aKey.wasPressedThisFrame)
+                return true;
             Mouse mouse = Mouse.current;
             if (mouse != null && mouse.rightButton.wasPressedThisFrame)
                 return true;
@@ -3396,10 +3642,19 @@ namespace Soccer3D.Gameplay
         public static bool ReadKnockOnBurstPressedThisFrame()
         {
             Keyboard kb = Keyboard.current;
-            if (kb != null && kb.eKey.wasPressedThisFrame)
+            if (kb != null && (kb.leftShiftKey.wasPressedThisFrame || kb.rightShiftKey.wasPressedThisFrame))
                 return true;
             Gamepad gp = Gamepad.current;
             return gp != null && gp.buttonNorth.wasPressedThisFrame;
+        }
+
+        public static bool ReadKnockOnBurstHeld()
+        {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && (kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed))
+                return true;
+            Gamepad gp = Gamepad.current;
+            return gp != null && gp.buttonNorth.isPressed;
         }
 
         public static bool ReadHoldZ()
@@ -3439,6 +3694,9 @@ namespace Soccer3D.Gameplay
 
         public static bool ReadShootPressedThisFrame()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.dKey.wasPressedThisFrame)
+                return true;
             Mouse mouse = Mouse.current;
             if (mouse != null && mouse.leftButton.wasPressedThisFrame)
                 return true;
@@ -3448,6 +3706,9 @@ namespace Soccer3D.Gameplay
 
         public static bool ReadShootHeld()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.dKey.isPressed)
+                return true;
             Mouse mouse = Mouse.current;
             if (mouse != null && mouse.leftButton.isPressed)
                 return true;
@@ -3457,6 +3718,9 @@ namespace Soccer3D.Gameplay
 
         public static bool ReadShootReleasedThisFrame()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.dKey.wasReleasedThisFrame)
+                return true;
             Mouse mouse = Mouse.current;
             if (mouse != null && mouse.leftButton.wasReleasedThisFrame)
                 return true;
@@ -3466,6 +3730,9 @@ namespace Soccer3D.Gameplay
 
         public static bool ReadPassPressedThisFrame()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.sKey.wasPressedThisFrame)
+                return true;
             Mouse mouse = Mouse.current;
             if (mouse != null && mouse.rightButton.wasPressedThisFrame)
                 return true;
@@ -3473,8 +3740,20 @@ namespace Soccer3D.Gameplay
             return gp != null && gp.buttonSouth.wasPressedThisFrame;
         }
 
+        public static bool ReadThroughPassWPressedThisFrame()
+        {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.wKey.wasPressedThisFrame)
+                return true;
+            Gamepad gp = Gamepad.current;
+            return gp != null && gp.buttonNorth.wasPressedThisFrame;
+        }
+
         public static bool ReadLobAPressedThisFrame()
         {
+            Keyboard kb = Keyboard.current;
+            if (kb != null && kb.aKey.wasPressedThisFrame)
+                return true;
             Gamepad gp = Gamepad.current;
             return gp != null && gp.buttonWest.wasPressedThisFrame;
         }

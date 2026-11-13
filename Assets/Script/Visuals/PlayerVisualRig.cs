@@ -15,6 +15,7 @@ namespace Soccer3D.Visuals
             ScissorsVolley,
             Tackle,
             FoulFall,
+            Stumble,
             WallJump,
             KeeperDive,
             Celebrate,
@@ -22,6 +23,14 @@ namespace Soccer3D.Visuals
             Header,
             BlitzDash,
             ShoulderBarge
+        }
+
+        public enum CelebrationStyle
+        {
+            SonCamera,       // 손흥민 시그니처 찰칵 세레머니
+            RonaldoSiu,      // 호날두 호우(Siuuu) 점프 반회전 착지
+            KneeSlide,       // 무릎 슬라이딩 & 양팔 벌려 포효
+            BellinghamStand  // 벨링엄 양팔 수평 포효
         }
 
         private Transform _bodyRoot;
@@ -45,6 +54,9 @@ namespace Soccer3D.Visuals
 
         private GameObject _chargeFootAura;
         private GameObject _groundIndicatorObj;
+        private GameObject _overheadCursorObj;
+        private Renderer _groundIndicatorRenderer;
+        private Color _teamJerseyColor = Color.white;
         private readonly List<Renderer> _firstPersonHiddenRenderers = new List<Renderer>();
         private float _walkCycle;
         private float _heightScale = 1f;
@@ -53,6 +65,7 @@ namespace Soccer3D.Visuals
 
         public bool IsFirstPersonMode { get; private set; }
         public float WalkCycle => _walkCycle;
+        public bool IsPerformingAction => _currentAction != AnimAction.None;
 
         public void SetJumpHeightOffset(float offsetY)
         {
@@ -70,7 +83,61 @@ namespace Soccer3D.Visuals
         private float _actionDuration;
         private PreferredFoot _animKickFoot = PreferredFoot.Right;
         private bool _isFinessePose;
+        private float _trapBallHeight = 0.25f;
         private float _diveDirSign;
+        private CelebrationStyle _currentCelebrationStyle = CelebrationStyle.SonCamera;
+        private GameObject _humanRingObj;
+        private Transform _humanDirArrowPivot;
+        private bool _isControlledPlayer;
+        private Vector3 _lastControlDir = Vector3.right;
+        private static Mesh _cachedFifaRingMesh;
+        private static Mesh _cachedDirTriangleMesh;
+
+        private static Mesh GetFifaRingMesh()
+        {
+            if (_cachedFifaRingMesh != null) return _cachedFifaRingMesh;
+            const int segs = 64;
+            const float innerR = 0.89f;
+            const float outerR = 0.98f;
+            Vector3[] verts = new Vector3[segs * 2];
+            int[] tris = new int[segs * 6];
+            for (int i = 0; i < segs; i++)
+            {
+                float ang = (i / (float)segs) * Mathf.PI * 2f;
+                float c = Mathf.Cos(ang);
+                float s = Mathf.Sin(ang);
+                verts[i * 2] = new Vector3(c * innerR, 0f, s * innerR);
+                verts[i * 2 + 1] = new Vector3(c * outerR, 0f, s * outerR);
+                int next = (i + 1) % segs;
+                int t = i * 6;
+                tris[t] = i * 2;
+                tris[t + 1] = i * 2 + 1;
+                tris[t + 2] = next * 2 + 1;
+                tris[t + 3] = i * 2;
+                tris[t + 4] = next * 2 + 1;
+                tris[t + 5] = next * 2;
+            }
+            Mesh m = new Mesh { name = "FifaControlRingMesh", vertices = verts, triangles = tris };
+            m.RecalculateNormals();
+            _cachedFifaRingMesh = m;
+            return m;
+        }
+
+        private static Mesh GetDirectionTriangleMesh()
+        {
+            if (_cachedDirTriangleMesh != null) return _cachedDirTriangleMesh;
+            Vector3[] verts =
+            {
+                new Vector3(0f, 0f, 0.28f),
+                new Vector3(-0.18f, 0f, -0.06f),
+                new Vector3(0.18f, 0f, -0.06f)
+            };
+            int[] tris = { 0, 2, 1 };
+            Mesh m = new Mesh { name = "FifaDirTriangleMesh", vertices = verts, triangles = tris };
+            m.RecalculateNormals();
+            _cachedDirTriangleMesh = m;
+            return m;
+        }
 
         public void BuildFromProfile(PlayerProfile profile, bool isGoalkeeper = false)
         {
@@ -224,7 +291,51 @@ namespace Soccer3D.Visuals
                 Renderer gr = baseRing.GetComponent<Renderer>();
                 gr.sharedMaterial = MaterialHelper.CreateAdditiveVfxMaterial(jersey, 2.0f, useRing: true);
                 gr.shadowCastingMode = ShadowCastingMode.Off;
+                _groundIndicatorRenderer = gr;
+                _teamJerseyColor = jersey;
                 _groundIndicatorObj = baseRing;
+
+                // 피파 스타일 머리 위 조종 마커 (역삼각형/다이아몬드, 현재 조종 중인 선수만 활성화)
+                GameObject cursorObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cursorObj.name = "HumanControlMarker";
+                RemoveCollider(cursorObj);
+                cursorObj.transform.SetParent(transform, false);
+                cursorObj.transform.localPosition = new Vector3(0f, 2.35f * _heightScale, 0f);
+                cursorObj.transform.localRotation = Quaternion.Euler(45f, 45f, 0f);
+                cursorObj.transform.localScale = new Vector3(0.28f, 0.28f, 0.28f);
+                Renderer cr = cursorObj.GetComponent<Renderer>();
+                cr.sharedMaterial = MaterialHelper.CreateHdrUnlitMaterial(new Color(1.0f, 0.26f, 0.18f), 2.8f);
+                cr.shadowCastingMode = ShadowCastingMode.Off;
+                cursorObj.SetActive(false);
+                _overheadCursorObj = cursorObj;
+
+                Material fifaNeonMat = MaterialHelper.CreateHdrUnlitMaterial(new Color(0.45f, 1.0f, 0.08f, 0.98f), 2.3f);
+
+                _humanRingObj = new GameObject("FifaControlRing");
+                _humanRingObj.transform.SetParent(transform, false);
+                _humanRingObj.transform.localPosition = new Vector3(0f, 0.025f, 0f);
+                MeshFilter rf = _humanRingObj.AddComponent<MeshFilter>();
+                rf.sharedMesh = GetFifaRingMesh();
+                MeshRenderer rr = _humanRingObj.AddComponent<MeshRenderer>();
+                rr.sharedMaterial = fifaNeonMat;
+                rr.shadowCastingMode = ShadowCastingMode.Off;
+                _humanRingObj.SetActive(false);
+
+                GameObject arrowPivot = new GameObject("FifaDirArrowPivot");
+                arrowPivot.transform.SetParent(transform, false);
+                arrowPivot.transform.localPosition = new Vector3(0f, 0.028f, 0f);
+                _humanDirArrowPivot = arrowPivot.transform;
+
+                GameObject arrowTri = new GameObject("FifaDirTriangle");
+                arrowTri.transform.SetParent(_humanDirArrowPivot, false);
+                arrowTri.transform.localPosition = new Vector3(0f, 0f, 1.12f);
+                MeshFilter tf = arrowTri.AddComponent<MeshFilter>();
+                tf.sharedMesh = GetDirectionTriangleMesh();
+                MeshRenderer tr = arrowTri.AddComponent<MeshRenderer>();
+                tr.sharedMaterial = fifaNeonMat;
+                tr.shadowCastingMode = ShadowCastingMode.Off;
+
+                _humanDirArrowPivot.gameObject.SetActive(false);
             }
 
             CacheFirstPersonHiddenRenderers();
@@ -265,7 +376,52 @@ namespace Soccer3D.Visuals
             }
 
             if (_groundIndicatorObj != null)
-                _groundIndicatorObj.SetActive(!firstPerson);
+                _groundIndicatorObj.SetActive(!firstPerson && !_isControlledPlayer);
+            if (_humanRingObj != null)
+                _humanRingObj.SetActive(!firstPerson && _isControlledPlayer);
+            if (_humanDirArrowPivot != null)
+                _humanDirArrowPivot.gameObject.SetActive(!firstPerson && _isControlledPlayer);
+        }
+
+        public void SetControlledPlayerHighlight(bool isControlled)
+        {
+            _isControlledPlayer = isControlled;
+
+            if (_overheadCursorObj != null)
+                _overheadCursorObj.SetActive(isControlled);
+
+            if (_humanRingObj != null)
+                _humanRingObj.SetActive(isControlled && !IsFirstPersonMode);
+
+            if (_humanDirArrowPivot != null)
+                _humanDirArrowPivot.gameObject.SetActive(isControlled && !IsFirstPersonMode);
+
+            if (_groundIndicatorObj != null)
+            {
+                _groundIndicatorObj.SetActive(!isControlled && !IsFirstPersonMode);
+                _groundIndicatorObj.transform.localScale = new Vector3(0.76f, 0.008f, 0.76f);
+            }
+
+            if (_groundIndicatorRenderer != null && _groundIndicatorRenderer.material != null)
+                _groundIndicatorRenderer.material.color = new Color(_teamJerseyColor.r, _teamJerseyColor.g, _teamJerseyColor.b, 0.45f);
+        }
+
+        public void UpdateControlDirectionArrow(Vector2 moveInput, Vector3 fallbackForward)
+        {
+            if (_humanDirArrowPivot == null || !_isControlledPlayer) return;
+
+            if (moveInput.sqrMagnitude > 0.04f)
+            {
+                _lastControlDir = new Vector3(moveInput.x, 0f, moveInput.y).normalized;
+            }
+            else if (_lastControlDir.sqrMagnitude < 0.01f)
+            {
+                Vector3 f = new Vector3(fallbackForward.x, 0f, fallbackForward.z);
+                _lastControlDir = f.sqrMagnitude > 0.01f ? f.normalized : Vector3.right;
+            }
+
+            Quaternion wantRot = Quaternion.LookRotation(_lastControlDir, Vector3.up);
+            _humanDirArrowPivot.rotation = Quaternion.Slerp(_humanDirArrowPivot.rotation, wantRot, Mathf.Clamp01(Time.deltaTime * 24f));
         }
 
         public Vector3 GetFirstPersonEyeWorldPosition(Vector3 facingForward)
@@ -535,17 +691,27 @@ namespace Soccer3D.Visuals
             _actionDuration = duration;
         }
 
-        public void TriggerCelebration(float duration = 2.8f)
+        public void TriggerCelebration(float duration = 3.0f, CelebrationStyle style = CelebrationStyle.SonCamera)
         {
             _currentAction = AnimAction.Celebrate;
+            _currentCelebrationStyle = style;
             _actionTimer = 0f;
             _actionDuration = duration;
         }
 
-        public void TriggerTrapping(PreferredFoot foot, float duration = 0.36f)
+        public void TriggerStumble(float duration = 0.42f)
+        {
+            if (_currentAction == AnimAction.FoulFall || _currentAction == AnimAction.Celebrate) return;
+            _currentAction = AnimAction.Stumble;
+            _actionTimer = 0f;
+            _actionDuration = duration;
+        }
+
+        public void TriggerTrapping(PreferredFoot foot, float duration = 0.36f, float ballHeight = 0.25f)
         {
             _currentAction = AnimAction.TrapBall;
             _animKickFoot = foot;
+            _trapBallHeight = ballHeight;
             _actionTimer = 0f;
             _actionDuration = duration;
         }
@@ -583,6 +749,8 @@ namespace Soccer3D.Visuals
                 _bodyRoot.localPosition = new Vector3(0f, 0.92f * _heightScale, 0f);
                 _bodyRoot.localRotation = Quaternion.identity;
             }
+            if (_head != null)
+                _head.localRotation = Quaternion.identity;
         }
 
         public void UpdateProceduralAnimation(Vector3 planarVelocity, bool isSprinting, float dt)
@@ -622,6 +790,10 @@ namespace Soccer3D.Visuals
             }
 
             _bodyRoot.localRotation = Quaternion.Lerp(_bodyRoot.localRotation, Quaternion.identity, dt * 14f);
+            if (_head != null)
+                _head.localRotation = Quaternion.Lerp(_head.localRotation, Quaternion.identity, dt * 14f);
+            if (_overheadCursorObj != null && _overheadCursorObj.activeSelf)
+                _overheadCursorObj.transform.Rotate(0f, 95f * dt, 0f, Space.Self);
 
             if (speed > 0.18f)
             {
@@ -793,33 +965,126 @@ namespace Soccer3D.Visuals
 
                 case AnimAction.FoulFall:
                 {
-                    // 위험한 태클에 걸려 공중으로 걸려 넘어졌다가 잔디에 구르는 연출!
-                    float down = t < 0.35f ? SmoothStep01(t / 0.35f) : (t > 0.82f ? 1f - SmoothStep01((t - 0.82f) / 0.18f) : 1f);
-                    float hop = t < 0.35f ? Mathf.Sin((t / 0.35f) * Mathf.PI) * 0.45f : 0f;
-                    _bodyRoot.localPosition = new Vector3(0f, Mathf.Lerp(baseRootY, 0.25f * _heightScale, down) + hop, 0f);
-                    _bodyRoot.localRotation = Quaternion.Euler(82f * down, 25f * down, 35f * down);
-                    _leftKnee.localRotation = Quaternion.Euler(65f * down, 0f, 0f);
-                    _rightKnee.localRotation = Quaternion.Euler(55f * down, 0f, 0f);
-                    _leftShoulder.localRotation = Quaternion.Euler(-55f * down, 0f, 40f * down);
-                    _rightShoulder.localRotation = Quaternion.Euler(-55f * down, 0f, -40f * down);
+                    if (t < 0.22f)
+                    {
+                        float p = SmoothStep01(t / 0.22f);
+                        _bodyRoot.localPosition = new Vector3(0f, baseRootY + Mathf.Sin(p * Mathf.PI) * 0.08f * _heightScale, 0.12f * p);
+                        _bodyRoot.localRotation = Quaternion.Euler(28f * p, 12f * p, 16f * p);
+                        _spine.localRotation = Quaternion.Euler(18f * p, 8f * p, 12f * p);
+                        _leftHip.localRotation = Quaternion.Euler(-22f * p, 0f, -8f);
+                        _rightHip.localRotation = Quaternion.Euler(28f * p, 0f, 10f);
+                        _leftKnee.localRotation = Quaternion.Euler(35f * p, 0f, 0f);
+                        _rightKnee.localRotation = Quaternion.Euler(48f * p, 0f, 0f);
+                        _leftShoulder.localRotation = Quaternion.Euler(-45f * p, 0f, 38f * p);
+                        _rightShoulder.localRotation = Quaternion.Euler(-60f * p, 0f, -46f * p);
+                    }
+                    else if (t < 0.48f)
+                    {
+                        float p = SmoothStep01((t - 0.22f) / 0.26f);
+                        _bodyRoot.localPosition = new Vector3(0f, Mathf.Lerp(baseRootY, 0.21f * _heightScale, p), 0.12f + 0.18f * p);
+                        _bodyRoot.localRotation = Quaternion.Euler(Mathf.Lerp(28f, 76f, p), Mathf.Lerp(12f, 22f, p), Mathf.Lerp(16f, 46f, p));
+                        _spine.localRotation = Quaternion.Euler(Mathf.Lerp(18f, 12f, p), 10f, 14f);
+                        _leftHip.localRotation = Quaternion.Euler(Mathf.Lerp(-22f, -34f, p), 0f, -14f);
+                        _rightHip.localRotation = Quaternion.Euler(Mathf.Lerp(28f, -14f, p), 0f, 16f);
+                        _leftKnee.localRotation = Quaternion.Euler(Mathf.Lerp(35f, 72f, p), 0f, 0f);
+                        _rightKnee.localRotation = Quaternion.Euler(Mathf.Lerp(48f, 44f, p), 0f, 0f);
+                        _leftShoulder.localRotation = Quaternion.Euler(-65f, 0f, 52f);
+                        _rightShoulder.localRotation = Quaternion.Euler(-82f, 0f, -26f);
+                    }
+                    else if (t < 0.72f)
+                    {
+                        float p = SmoothStep01((t - 0.48f) / 0.24f);
+                        _bodyRoot.localPosition = new Vector3(0f, 0.21f * _heightScale, 0.30f - 0.06f * p);
+                        _bodyRoot.localRotation = Quaternion.Euler(Mathf.Lerp(76f, 64f, p), Mathf.Lerp(22f, 14f, p), Mathf.Lerp(46f, 32f, p));
+                        _spine.localRotation = Quaternion.Euler(14f, 6f, 8f);
+                        _leftHip.localRotation = Quaternion.Euler(-42f, 0f, -12f);
+                        _rightHip.localRotation = Quaternion.Euler(-18f, 0f, 14f);
+                        _leftKnee.localRotation = Quaternion.Euler(78f, 0f, 0f);
+                        _rightKnee.localRotation = Quaternion.Euler(52f, 0f, 0f);
+                        _leftShoulder.localRotation = Quaternion.Euler(-78f, 0f, 34f);
+                        _rightShoulder.localRotation = Quaternion.Euler(-62f, 0f, -20f);
+                    }
+                    else
+                    {
+                        float p = SmoothStep01((t - 0.72f) / 0.28f);
+                        _bodyRoot.localPosition = new Vector3(0f, Mathf.Lerp(0.21f * _heightScale, baseRootY, p), Mathf.Lerp(0.24f, 0f, p));
+                        _bodyRoot.localRotation = Quaternion.Euler(Mathf.Lerp(64f, 0f, p), Mathf.Lerp(14f, 0f, p), Mathf.Lerp(32f, 0f, p));
+                        _spine.localRotation = Quaternion.Euler(Mathf.Lerp(24f, 0f, p), 0f, 0f);
+                        _leftHip.localRotation = Quaternion.Euler(Mathf.Lerp(-42f, 0f, p), 0f, Mathf.Lerp(-10f, 0f, p));
+                        _rightHip.localRotation = Quaternion.Euler(Mathf.Lerp(-18f, 0f, p), 0f, Mathf.Lerp(10f, 0f, p));
+                        _leftKnee.localRotation = Quaternion.Euler(Mathf.Lerp(78f, 8f, p), 0f, 0f);
+                        _rightKnee.localRotation = Quaternion.Euler(Mathf.Lerp(52f, 8f, p), 0f, 0f);
+                        _leftShoulder.localRotation = Quaternion.Euler(Mathf.Lerp(-72f, 0f, p), 0f, Mathf.Lerp(28f, 4f, p));
+                        _rightShoulder.localRotation = Quaternion.Euler(Mathf.Lerp(-52f, 0f, p), 0f, Mathf.Lerp(-20f, -4f, p));
+                    }
+                    break;
+                }
+
+                case AnimAction.Stumble:
+                {
+                    float w = Mathf.Sin(t * Mathf.PI);
+                    float wobble = Mathf.Sin(t * Mathf.PI * 3f);
+                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.10f * w * _heightScale, 0f);
+                    _bodyRoot.localRotation = Quaternion.Euler(18f * w, 10f * wobble, 14f * wobble);
+                    _spine.localRotation = Quaternion.Euler(14f * w, 0f, 0f);
+                    _leftHip.localRotation = Quaternion.Euler(-22f * w, 0f, -8f);
+                    _rightHip.localRotation = Quaternion.Euler(26f * w, 0f, 8f);
+                    _leftKnee.localRotation = Quaternion.Euler(34f * w + 8f, 0f, 0f);
+                    _rightKnee.localRotation = Quaternion.Euler(28f * w + 8f, 0f, 0f);
+                    _leftShoulder.localRotation = Quaternion.Euler(-38f * w, 0f, 44f * w);
+                    _rightShoulder.localRotation = Quaternion.Euler(-38f * w, 0f, -44f * w);
                     break;
                 }
 
                 case AnimAction.TrapBall:
                 {
-                    // 낙하하거나 굴러오는 공을 발바닥/인사이드로 부드럽게 완충(Cushion) 트래핑하는 프로 선수 모션!
                     float trapArc = Mathf.Sin(t * Mathf.PI);
-                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.08f * trapArc * _heightScale, 0f);
-                    _bodyRoot.localRotation = Quaternion.Euler(6f * trapArc, -sideSign * 12f * trapArc, 0f);
-                    _spine.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
+                    if (_trapBallHeight >= 0.92f)
+                    {
+                        // 공중볼 가슴(흉부) 쿠션 트래핑: 상체를 뒤로 젖히며 충격을 흡수하고 양팔로 밸런스 유지
+                        _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.09f * trapArc * _heightScale, 0f);
+                        _bodyRoot.localRotation = Quaternion.Euler(-8f * trapArc, 0f, 0f);
+                        _spine.localRotation = Quaternion.Euler(-22f * trapArc, 0f, 0f);
+                        _head.localRotation = Quaternion.Euler(-14f * trapArc, 0f, 0f);
 
-                    kickHip.localRotation = Quaternion.Euler(-18f * trapArc, -sideSign * 24f * trapArc, 0f);
-                    kickKnee.localRotation = Quaternion.Euler(32f * trapArc + 8f, 0f, 0f);
-                    plantHip.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
-                    plantKnee.localRotation = Quaternion.Euler(16f * trapArc + 6f, 0f, 0f);
+                        kickHip.localRotation = Quaternion.Euler(-14f * trapArc, 0f, sideSign * 6f * trapArc);
+                        kickKnee.localRotation = Quaternion.Euler(26f * trapArc + 10f, 0f, 0f);
+                        plantHip.localRotation = Quaternion.Euler(12f * trapArc, 0f, 0f);
+                        plantKnee.localRotation = Quaternion.Euler(24f * trapArc + 8f, 0f, 0f);
 
-                    _leftShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, 18f * trapArc);
-                    _rightShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, -18f * trapArc);
+                        _leftShoulder.localRotation = Quaternion.Euler(12f * trapArc, 0f, 34f * trapArc);
+                        _rightShoulder.localRotation = Quaternion.Euler(12f * trapArc, 0f, -34f * trapArc);
+                    }
+                    else if (_trapBallHeight >= 0.48f)
+                    {
+                        // 허벅지/골반 높이 공중볼 트래핑: 무릎과 허벅지를 들어 올려 공을 부드럽게 낙하 컨트롤
+                        _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.05f * trapArc * _heightScale, 0f);
+                        _bodyRoot.localRotation = Quaternion.Euler(-6f * trapArc, -sideSign * 8f * trapArc, 0f);
+                        _spine.localRotation = Quaternion.Euler(-6f * trapArc, 0f, 0f);
+
+                        kickHip.localRotation = Quaternion.Euler(-58f * trapArc, -sideSign * 10f * trapArc, 0f);
+                        kickKnee.localRotation = Quaternion.Euler(82f * trapArc + 8f, 0f, 0f);
+                        plantHip.localRotation = Quaternion.Euler(10f * trapArc, 0f, 0f);
+                        plantKnee.localRotation = Quaternion.Euler(18f * trapArc + 8f, 0f, 0f);
+
+                        _leftShoulder.localRotation = Quaternion.Euler(-14f * trapArc, 0f, 24f * trapArc);
+                        _rightShoulder.localRotation = Quaternion.Euler(-14f * trapArc, 0f, -24f * trapArc);
+                    }
+                    else
+                    {
+                        // 낙하하거나 굴러오는 공을 발바닥/인사이드로 부드럽게 완충(Cushion) 트래핑하는 프로 선수 모션!
+                        _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.08f * trapArc * _heightScale, 0f);
+                        _bodyRoot.localRotation = Quaternion.Euler(6f * trapArc, -sideSign * 12f * trapArc, 0f);
+                        _spine.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
+
+                        kickHip.localRotation = Quaternion.Euler(-18f * trapArc, -sideSign * 24f * trapArc, 0f);
+                        kickKnee.localRotation = Quaternion.Euler(32f * trapArc + 8f, 0f, 0f);
+                        plantHip.localRotation = Quaternion.Euler(8f * trapArc, 0f, 0f);
+                        plantKnee.localRotation = Quaternion.Euler(16f * trapArc + 6f, 0f, 0f);
+
+                        _leftShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, 18f * trapArc);
+                        _rightShoulder.localRotation = Quaternion.Euler(-12f * trapArc, 0f, -18f * trapArc);
+                    }
                     break;
                 }
 
@@ -884,29 +1149,102 @@ namespace Soccer3D.Visuals
 
                 case AnimAction.Celebrate:
                 {
-                    float bounce = Mathf.Abs(Mathf.Sin(t * Mathf.PI * 5f));
-                    _bodyRoot.localPosition = new Vector3(0f, baseRootY + bounce * 0.55f * _heightScale, 0f);
-                    _bodyRoot.localRotation = Quaternion.Euler(-10f * bounce, t * 720f, 0f);
-                    _leftShoulder.localRotation = Quaternion.Euler(-155f, 0f, 25f);
-                    _rightShoulder.localRotation = Quaternion.Euler(-155f, 0f, -25f);
-                    _leftHip.localRotation = Quaternion.Euler(-25f * bounce, 0f, -12f);
-                    _rightHip.localRotation = Quaternion.Euler(25f * bounce, 0f, 12f);
+                    switch (_currentCelebrationStyle)
+                    {
+                        case CelebrationStyle.SonCamera:
+                        {
+                            float poseIn = SmoothStep01(Mathf.Clamp01(t / 0.25f));
+                            float sway = Mathf.Sin(t * Mathf.PI * 2f);
+                            _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.04f * poseIn * _heightScale, 0f);
+                            _bodyRoot.localRotation = Quaternion.Euler(4f * poseIn, 8f * sway, 0f);
+                            _spine.localRotation = Quaternion.Euler(6f * poseIn, 0f, 0f);
+                            if (_head != null) _head.localRotation = Quaternion.Euler(-4f * poseIn, 0f, 0f);
+                            _leftShoulder.localRotation = Quaternion.Euler(-105f * poseIn, -32f * poseIn, 18f * poseIn);
+                            _rightShoulder.localRotation = Quaternion.Euler(-105f * poseIn, 32f * poseIn, -18f * poseIn);
+                            if (_leftElbow != null) _leftElbow.localRotation = Quaternion.Euler(-95f * poseIn, 0f, 0f);
+                            if (_rightElbow != null) _rightElbow.localRotation = Quaternion.Euler(-95f * poseIn, 0f, 0f);
+                            _leftHip.localRotation = Quaternion.Euler(-10f * poseIn, 0f, -6f);
+                            _rightHip.localRotation = Quaternion.Euler(10f * poseIn, 0f, 6f);
+                            _leftKnee.localRotation = Quaternion.Euler(14f * poseIn, 0f, 0f);
+                            _rightKnee.localRotation = Quaternion.Euler(14f * poseIn, 0f, 0f);
+                            break;
+                        }
+                        case CelebrationStyle.RonaldoSiu:
+                        {
+                            if (t < 0.45f)
+                            {
+                                float p = SmoothStep01(t / 0.45f);
+                                float jump = Mathf.Sin(p * Mathf.PI);
+                                _bodyRoot.localPosition = new Vector3(0f, baseRootY + jump * 0.62f * _heightScale, 0f);
+                                _bodyRoot.localRotation = Quaternion.Euler(-8f * jump, Mathf.Lerp(0f, 180f, p), 0f);
+                                _leftShoulder.localRotation = Quaternion.Euler(-85f * jump, 0f, 28f);
+                                _rightShoulder.localRotation = Quaternion.Euler(-85f * jump, 0f, -28f);
+                                _leftKnee.localRotation = Quaternion.Euler(35f * jump, 0f, 0f);
+                                _rightKnee.localRotation = Quaternion.Euler(35f * jump, 0f, 0f);
+                            }
+                            else
+                            {
+                                float hold = SmoothStep01(Mathf.Clamp01((t - 0.45f) / 0.20f));
+                                _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.08f * hold * _heightScale, 0f);
+                                _bodyRoot.localRotation = Quaternion.Euler(-8f * hold, 180f, 0f);
+                                _spine.localRotation = Quaternion.Euler(-12f * hold, 0f, 0f);
+                                _leftShoulder.localRotation = Quaternion.Euler(34f * hold, 0f, 62f * hold);
+                                _rightShoulder.localRotation = Quaternion.Euler(34f * hold, 0f, -62f * hold);
+                                _leftHip.localRotation = Quaternion.Euler(-14f * hold, 0f, -18f * hold);
+                                _rightHip.localRotation = Quaternion.Euler(-14f * hold, 0f, 18f * hold);
+                                _leftKnee.localRotation = Quaternion.Euler(18f * hold, 0f, 0f);
+                                _rightKnee.localRotation = Quaternion.Euler(18f * hold, 0f, 0f);
+                            }
+                            break;
+                        }
+                        case CelebrationStyle.KneeSlide:
+                        {
+                            float slide = t < 0.25f ? SmoothStep01(t / 0.25f) : (t > 0.80f ? 1f - SmoothStep01((t - 0.80f) / 0.20f) : 1f);
+                            _bodyRoot.localPosition = new Vector3(0f, Mathf.Lerp(baseRootY, 0.50f * _heightScale, slide), 0.16f * slide);
+                            _bodyRoot.localRotation = Quaternion.Euler(-16f * slide, 0f, 0f);
+                            _spine.localRotation = Quaternion.Euler(-14f * slide, 0f, 0f);
+                            _leftHip.localRotation = Quaternion.Euler(-22f * slide, 0f, -10f);
+                            _rightHip.localRotation = Quaternion.Euler(-22f * slide, 0f, 10f);
+                            _leftKnee.localRotation = Quaternion.Euler(96f * slide, 0f, 0f);
+                            _rightKnee.localRotation = Quaternion.Euler(96f * slide, 0f, 0f);
+                            _leftShoulder.localRotation = Quaternion.Euler(-24f * slide, 0f, 78f * slide);
+                            _rightShoulder.localRotation = Quaternion.Euler(-24f * slide, 0f, -78f * slide);
+                            break;
+                        }
+                        default:
+                        {
+                            float pose = SmoothStep01(Mathf.Clamp01(t / 0.28f));
+                            _bodyRoot.localPosition = new Vector3(0f, baseRootY, 0f);
+                            _bodyRoot.localRotation = Quaternion.Euler(-6f * pose, 0f, 0f);
+                            _spine.localRotation = Quaternion.Euler(-10f * pose, 0f, 0f);
+                            if (_head != null) _head.localRotation = Quaternion.Euler(-8f * pose, 0f, 0f);
+                            _leftShoulder.localRotation = Quaternion.Euler(-12f * pose, 0f, 88f * pose);
+                            _rightShoulder.localRotation = Quaternion.Euler(-12f * pose, 0f, -88f * pose);
+                            _leftHip.localRotation = Quaternion.Euler(0f, 0f, -10f * pose);
+                            _rightHip.localRotation = Quaternion.Euler(0f, 0f, 10f * pose);
+                            _leftKnee.localRotation = Quaternion.Euler(6f, 0f, 0f);
+                            _rightKnee.localRotation = Quaternion.Euler(6f, 0f, 0f);
+                            break;
+                        }
+                    }
                     break;
                 }
 
                 case AnimAction.BlitzDash:
                 {
-                    // 스페이스 2연타 순간 돌진 탈취: 낮은 중심의 폭발적인 전광석화 돌진 자세!
                     float surge = Mathf.Sin(t * Mathf.PI);
-                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.22f * surge * _heightScale, 0.22f * surge);
-                    _bodyRoot.localRotation = Quaternion.Euler(24f * surge, 0f, 0f);
-                    _spine.localRotation = Quaternion.Euler(18f * surge, 0f, 0f);
-                    _rightHip.localRotation = Quaternion.Euler(-58f * surge, 0f, 0f);
-                    _rightKnee.localRotation = Quaternion.Euler(22f * surge + 8f, 0f, 0f);
-                    _leftHip.localRotation = Quaternion.Euler(52f * surge, 0f, 0f);
-                    _leftKnee.localRotation = Quaternion.Euler(64f * surge + 8f, 0f, 0f);
-                    _leftShoulder.localRotation = Quaternion.Euler(42f * surge, 0f, 22f);
-                    _rightShoulder.localRotation = Quaternion.Euler(-48f * surge, 0f, -22f);
+                    float phase = t * Mathf.PI * 5.0f;
+                    float stride = Mathf.Sin(phase);
+                    float lift = Mathf.Abs(Mathf.Cos(phase));
+                    _bodyRoot.localPosition = new Vector3(0f, baseRootY - 0.14f * surge * _heightScale + lift * 0.06f * _heightScale, 0.10f * surge);
+                    _bodyRoot.localRotation = Quaternion.Euler(20f * surge, 4f * stride, 0f);
+                    _spine.localRotation = Quaternion.Euler(14f * surge, -6f * stride, 0f);
+                    _leftHip.localRotation = Quaternion.Euler(52f * stride, 0f, -3f);
+                    _rightHip.localRotation = Quaternion.Euler(-52f * stride, 0f, 3f);
+                    _leftKnee.localRotation = Quaternion.Euler(Mathf.Clamp(-38f * stride + 24f, 6f, 76f), 0f, 0f);
+                    _rightKnee.localRotation = Quaternion.Euler(Mathf.Clamp(38f * stride + 24f, 6f, 76f), 0f, 0f);
+                    _leftShoulder.localRotation = Quaternion.Euler(-46f * stride, 0f, 14f);
+                    _rightShoulder.localRotation = Quaternion.Euler(46f * stride, 0f, -14f);
                     break;
                 }
 

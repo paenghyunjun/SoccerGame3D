@@ -370,26 +370,28 @@ namespace Soccer3D.Visuals
             _soccerBallTexture.wrapMode = TextureWrapMode.Repeat;
             _soccerBallTexture.filterMode = FilterMode.Trilinear;
 
+            // 정이십면체 12꼭짓점 기반 균등 5각형 블랙 패치 (클래식 흑백 축구공 디자인)
+            const float phi = 1.61803398875f;
             Vector3[] patchDirs =
             {
-                new Vector3(0, 1, 0),
-                new Vector3(0, -1, 0),
-                new Vector3(1, 0, 0),
-                new Vector3(-1, 0, 0),
-                new Vector3(0, 0, 1),
-                new Vector3(0, 0, -1),
-                new Vector3(0.577f, 0.577f, 0.577f),
-                new Vector3(-0.577f, 0.577f, 0.577f),
-                new Vector3(0.577f, -0.577f, 0.577f),
-                new Vector3(-0.577f, -0.577f, 0.577f),
-                new Vector3(0.577f, 0.577f, -0.577f),
-                new Vector3(-0.577f, -0.577f, -0.577f)
+                new Vector3(0f,  1f,  phi).normalized,
+                new Vector3(0f, -1f,  phi).normalized,
+                new Vector3(0f,  1f, -phi).normalized,
+                new Vector3(0f, -1f, -phi).normalized,
+                new Vector3( 1f,  phi, 0f).normalized,
+                new Vector3(-1f,  phi, 0f).normalized,
+                new Vector3( 1f, -phi, 0f).normalized,
+                new Vector3(-1f, -phi, 0f).normalized,
+                new Vector3( phi, 0f,  1f).normalized,
+                new Vector3(-phi, 0f,  1f).normalized,
+                new Vector3( phi, 0f, -1f).normalized,
+                new Vector3(-phi, 0f, -1f).normalized
             };
 
             Color[] pixels = new Color[w * h];
-            Color hiVisYellow = new Color(1.00f, 0.90f, 0.08f);
-            Color fluoOrangeRing = new Color(1.00f, 0.30f, 0.05f);
-            Color navyCore = new Color(0.08f, 0.11f, 0.28f);
+            Color classicWhite = new Color(0.96f, 0.96f, 0.97f);
+            Color seamGray = new Color(0.76f, 0.77f, 0.79f);
+            Color classicBlack = new Color(0.05f, 0.05f, 0.06f);
 
             for (int y = 0; y < h; y++)
             {
@@ -398,12 +400,12 @@ namespace Soccer3D.Visuals
                 for (int x = 0; x < w; x++)
                 {
                     float u = (x + 0.5f) / w;
-                    float phi = u * Mathf.PI * 2f;
+                    float phiAngle = u * Mathf.PI * 2f;
 
                     Vector3 dir = new Vector3(
-                        Mathf.Sin(theta) * Mathf.Cos(phi),
+                        Mathf.Sin(theta) * Mathf.Cos(phiAngle),
                         Mathf.Cos(theta),
-                        Mathf.Sin(theta) * Mathf.Sin(phi)
+                        Mathf.Sin(theta) * Mathf.Sin(phiAngle)
                     ).normalized;
 
                     float maxDot = -1f;
@@ -413,11 +415,11 @@ namespace Soccer3D.Visuals
                         if (d > maxDot) maxDot = d;
                     }
 
-                    Color c = hiVisYellow;
-                    if (maxDot > 0.915f)
-                        c = navyCore;
-                    else if (maxDot > 0.855f)
-                        c = fluoOrangeRing;
+                    Color c = classicWhite;
+                    if (maxDot > 0.922f)
+                        c = classicBlack;
+                    else if (maxDot > 0.910f)
+                        c = seamGray;
 
                     pixels[y * w + x] = c;
                 }

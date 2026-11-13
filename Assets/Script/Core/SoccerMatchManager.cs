@@ -349,6 +349,8 @@ namespace Soccer3D.Core
                 }
                 TacticalRole role = MapSlotToTacticalRole(slot);
                 _blueOutfield[i].SetupPlayer(prof, aiControlled: i != 0, attackSign: +1, matchBall: _ball, role: role, formationSlot: slot, squadIndex: i);
+                if (_blueOutfield[i].visualRig != null)
+                    _blueOutfield[i].visualRig.SetControlledPlayerHighlight(i == 0);
             }
 
             for (int i = 0; i < _redOutfield.Count; i++)
@@ -369,6 +371,8 @@ namespace Soccer3D.Core
                 }
                 TacticalRole role = MapSlotToTacticalRole(slot);
                 _redOutfield[i].SetupPlayer(prof, aiControlled: true, attackSign: -1, matchBall: _ball, role: role, formationSlot: slot, squadIndex: i);
+                if (_redOutfield[i].visualRig != null)
+                    _redOutfield[i].visualRig.SetControlledPlayerHighlight(false);
             }
 
             // 프리매치 11 vs 11 선발 라인업 소개: 실제 포메이션 위치에 22명 전원을 배치하여 GK부터 1명씩 3D 클로즈업 소개!
@@ -411,7 +415,7 @@ namespace Soccer3D.Core
                 bool playerGetsBall = DetermineKickoffPlayerGetsBall();
                 SetupKickoffPositions(playerGetsBallFirst: playerGetsBall);
                 _state = MatchState.Playing;
-                SetCursorLocked(true);
+                SetCursorLocked(_dynamicCam == null || !_dynamicCam.UseThirdPersonBroadcast);
                 SetAllOutfieldControls(true);
                 _ui.UpdateControlledPlayerHudInfo(_humanPlayer);
                 _ui.UpdateTacticalMinimap(_humanPlayer, _blueOutfield, _aiPlayer, _redDefenders, _playerKeeper, _aiKeeper, _ball);
@@ -423,7 +427,7 @@ namespace Soccer3D.Core
             {
                 _state = MatchState.Playing;
                 Time.timeScale = 1f;
-                SetCursorLocked(true);
+                SetCursorLocked(_dynamicCam == null || !_dynamicCam.UseThirdPersonBroadcast);
                 SetAllOutfieldControls(true);
             }
         }
@@ -440,10 +444,16 @@ namespace Soccer3D.Core
 
             SoccerPlayerController prevPlayer = _humanPlayer;
             if (prevPlayer != null)
+            {
                 prevPlayer.OnSwitchedToAI();
+                if (prevPlayer.visualRig != null)
+                    prevPlayer.visualRig.SetControlledPlayerHighlight(false);
+            }
 
             _humanPlayer = nextPlayer;
             _humanPlayer.OnSwitchedToHuman(smartAlignView: true);
+            if (_humanPlayer.visualRig != null)
+                _humanPlayer.visualRig.SetControlledPlayerHighlight(true);
 
             if (_dynamicCam != null)
             {
@@ -487,7 +497,8 @@ namespace Soccer3D.Core
             bool smartSwitchPressed = SoccerPlayerController.ReadPlayerSwitchPressedThisFrame();
 
             // 피파식 Q 선수 전환 지원: 내가 공을 소유하지 않았고 루즈볼 셀프 플릭 반경(2.2m) 밖일 때 Q키를 누르면 즉시 선수 전환!
-            if (!smartSwitchPressed && kb != null && kb.qKey.wasPressedThisFrame && _ball != null && _ball.CurrentOwner != _humanPlayer)
+            bool oppOrLooseBall = _ball != null && (_ball.CurrentOwner == null || _ball.CurrentOwner.attackingGoalSign != _humanPlayer.attackingGoalSign);
+            if (!smartSwitchPressed && kb != null && (kb.qKey.wasPressedThisFrame || (kb.sKey.wasPressedThisFrame && oppOrLooseBall)) && _ball != null && _ball.CurrentOwner != _humanPlayer)
             {
                 float planarDistBall = Vector2.Distance(
                     new Vector2(_humanPlayer.transform.position.x, _humanPlayer.transform.position.z),
@@ -500,73 +511,21 @@ namespace Soccer3D.Core
             if (!smartSwitchPressed || _ball == null)
                 return;
 
-            // 마우스 포인터(또는 1인칭 조준 크로스헤어)에 가장 가까이 있는 우리 팀 선수로 전환하되,
-            // 마우스 포인터 근처에 여러 명의 선수가 모여 있다면 그중 공과 가장 가까이 있는 선수로 전환!
-            Camera cam = Camera.main;
-            Vector2 pointerScreenPos = (Cursor.lockState != CursorLockMode.Locked && Mouse.current != null)
-                ? Mouse.current.position.ReadValue()
-                : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
-
-            Ray pointerRay = cam != null
-                ? cam.ScreenPointToRay(pointerScreenPos)
-                : new Ray(_humanPlayer.GetFirstPersonEyePosition(), _humanPlayer.GetFirstPersonAimDirection());
-
-            float minPointerAngle = float.MaxValue;
-            SoccerPlayerController closestToPointerMate = null;
-            List<SoccerPlayerController> validTeammates = new List<SoccerPlayerController>(3);
-            List<float> pointerAngles = new List<float>(3);
+            float bestBallSqr = float.MaxValue;
+            Vector2 ballXZ = new Vector2(_ball.transform.position.x, _ball.transform.position.z);
+            SoccerPlayerController targetMate = null;
 
             for (int i = 0; i < _blueOutfield.Count; i++)
             {
                 SoccerPlayerController bp = _blueOutfield[i];
                 if (bp == null || bp == _humanPlayer) continue;
 
-                Vector3 targetChest = bp.transform.position + Vector3.up * 1.0f;
-                Vector3 toMate = targetChest - pointerRay.origin;
-                float angleDeg = toMate.sqrMagnitude > 0.001f
-                    ? Vector3.Angle(pointerRay.direction, toMate.normalized)
-                    : 0f;
-
-                validTeammates.Add(bp);
-                pointerAngles.Add(angleDeg);
-
-                if (angleDeg < minPointerAngle)
+                float dSqr = (new Vector2(bp.transform.position.x, bp.transform.position.z) - ballXZ).sqrMagnitude;
+                if (dSqr < bestBallSqr)
                 {
-                    minPointerAngle = angleDeg;
-                    closestToPointerMate = bp;
+                    bestBallSqr = dSqr;
+                    targetMate = bp;
                 }
-            }
-
-            // 마우스 포인터 근처(포인터로부터 16도 이내 또는 최단 각도 선수와 9.5도 이내 반경)에 있는 후보 선수들 수집
-            float nearPointerThresholdDeg = Mathf.Max(16.0f, minPointerAngle + 9.5f);
-            List<SoccerPlayerController> nearPointerCandidates = new List<SoccerPlayerController>(3);
-            for (int i = 0; i < validTeammates.Count; i++)
-            {
-                if (pointerAngles[i] <= nearPointerThresholdDeg)
-                    nearPointerCandidates.Add(validTeammates[i]);
-            }
-
-            SoccerPlayerController targetMate = closestToPointerMate;
-
-            // 만약 마우스 포인터 근처에 여러 사람이 있다면 -> 그중 공과 가장 가까이 있는 사람으로 변경!
-            if (nearPointerCandidates.Count >= 2)
-            {
-                float bestBallDist = float.MaxValue;
-                Vector2 ballXZ = new Vector2(_ball.transform.position.x, _ball.transform.position.z);
-                for (int i = 0; i < nearPointerCandidates.Count; i++)
-                {
-                    SoccerPlayerController cand = nearPointerCandidates[i];
-                    float dBall = Vector2.Distance(new Vector2(cand.transform.position.x, cand.transform.position.z), ballXZ);
-                    if (dBall < bestBallDist)
-                    {
-                        bestBallDist = dBall;
-                        targetMate = cand;
-                    }
-                }
-            }
-            else if (nearPointerCandidates.Count == 1)
-            {
-                targetMate = nearPointerCandidates[0];
             }
 
             if (targetMate != null)
@@ -1490,9 +1449,15 @@ namespace Soccer3D.Core
             _ui.UpdateScoreAndTimer(_playerScore, _aiScore, _remainingTime);
 
             ShotMetadata lastShot = _ball.LastShot;
-            SoccerPlayerController scorer = (lastShot.shooter != null && (lastShot.shooter.attackingGoalSign > 0) == playerScored)
-                ? lastShot.shooter
-                : (playerScored ? _humanPlayer : _aiPlayer);
+            SoccerPlayerController dribbleOwner = _ball.CurrentOwner;
+            SoccerPlayerController scorer = (dribbleOwner != null && (dribbleOwner.attackingGoalSign > 0) == playerScored)
+                ? dribbleOwner
+                : ((lastShot.shooter != null && (lastShot.shooter.attackingGoalSign > 0) == playerScored)
+                    ? lastShot.shooter
+                    : ((_ball.LastTouchPlayer != null && (_ball.LastTouchPlayer.attackingGoalSign > 0) == playerScored)
+                        ? _ball.LastTouchPlayer
+                        : (playerScored ? _humanPlayer : _aiPlayer)));
+            _ball.SetOwner(null);
 
             bool wasAcrobatic = lastShot.shotType == ShotType.OverheadKick || lastShot.shotType == ShotType.AcrobaticVolley;
 
@@ -1518,21 +1483,9 @@ namespace Soccer3D.Core
                 GoalCelebrationManager.Instance.PlayGoalSpectacle(goalCenter, teamColor, wasAcrobatic);
             }
 
-            string headline;
-            if (lastShot.shotType == ShotType.OverheadKick)
-                headline = "🔥 오버헤드킥 원더골!! 🔥";
-            else if (lastShot.shotType == ShotType.AcrobaticVolley)
-                headline = "⚡ 환상의 시저스 발리 골!! ⚡";
-            else if (lastShot.shotType == ShotType.FinesseCurve)
-                headline = "🌀 예술적인 감아차기 골!! 🌀";
-            else
-                headline = "⚽ GOOOAAAL!! ⚽";
-
-            int kmh = Mathf.Max(65, Mathf.RoundToInt(lastShot.initialSpeedMps * 3.6f));
-            string scorerName = scorer.Profile != null ? scorer.Profile.playerName : (playerScored ? "우리 팀" : "상대 팀");
-            string footNote = lastShot.usedWeakFoot ? "약발 극복 극적 골!" : $"주발({(lastShot.footUsed == PreferredFoot.Right ? "오른발" : "왼발")}) 완벽 임팩트!";
-            string sub = $"{scorerName}  |  {ShotCalculator.GetVfxKoreanName(lastShot.vfxType)} ({kmh} km/h)  |  {footNote}";
-
+            string headline = "⚽ GOAL!! ⚽";
+            string scorerName = scorer.Profile != null ? scorer.Profile.playerName : (playerScored ? "BLUE TEAM" : "RED TEAM");
+            string sub = $"{scorerName} 득점!";
             _ui.ShowGoalCelebrationBanner(headline, sub);
 
             yield return new WaitForSecondsRealtime(0.75f);
@@ -1592,7 +1545,21 @@ namespace Soccer3D.Core
                 return;
             }
 
-            if (kb != null && kb.escapeKey.wasPressedThisFrame)
+            if (kb != null && kb.vKey.wasPressedThisFrame && _dynamicCam != null && (_state == MatchState.Playing || _state == MatchState.FreeKick))
+            {
+                _dynamicCam.UseThirdPersonBroadcast = !_dynamicCam.UseThirdPersonBroadcast;
+                SetCursorLocked(!_dynamicCam.UseThirdPersonBroadcast);
+                if (_ui != null)
+                    _ui.ShowShotToast(_dynamicCam.UseThirdPersonBroadcast ? "🎥 3인칭 중계 시점(FIFA 뷰) 전환! [V]" : "👁 1인칭 선수 시점 전환! [V]", false);
+            }
+
+            bool isBroadcastView = _dynamicCam != null && _dynamicCam.UseThirdPersonBroadcast;
+            if (isBroadcastView)
+            {
+                if (Cursor.lockState == CursorLockMode.Locked)
+                    SetCursorLocked(false);
+            }
+            else if (kb != null && kb.escapeKey.wasPressedThisFrame)
             {
                 SetCursorLocked(false);
             }
